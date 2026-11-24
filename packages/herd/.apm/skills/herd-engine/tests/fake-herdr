@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Fake herdr for tests. Logs every invocation to $FAKE_HERDR_LOG and answers with canned JSON
+# in the same shapes as herdr 0.7.5. `worktree create` performs a real `git worktree add`.
+set -euo pipefail
+: "${FAKE_HERDR_LOG:?FAKE_HERDR_LOG is required}"
+: "${FAKE_HERDR_STATE:?FAKE_HERDR_STATE is required}"
+printf '%s\n' "$*" >> "$FAKE_HERDR_LOG"
+next() { local f="$FAKE_HERDR_STATE/$1" n; n=$(( $(cat "$f" 2>/dev/null || echo 1) + 1 )); echo "$n" > "$f"; echo "$n"; }
+case "${1:-} ${2:-}" in
+  "workspace list") echo '{"id":"t","result":{"type":"workspace_list","workspaces":[]}}' ;;
+  "worktree create")
+    shift 2; cwd=""; branch=""; base=""; path=""
+    while [ $# -gt 0 ]; do
+      case "$1" in --cwd) cwd="$2"; shift ;; --branch) branch="$2"; shift ;; --base) base="$2"; shift ;; --path) path="$2"; shift ;; esac
+      shift
+    done
+    if [ -z "$cwd" ] || [ -z "$path" ] || [ -z "$branch" ]; then
+      echo '{"error":{"code":"fake_missing_args","message":"worktree create needs --cwd --path --branch"}}' >&2; exit 1
+    fi
+    git -C "$cwd" worktree add -q -b "$branch" "$path" "${base:-HEAD}"
+    echo '{"id":"t","result":{"type":"worktree_created","workspace":{"workspace_id":"wT"},"tab":{"tab_id":"wT:t1"},"root_pane":{"pane_id":"wT:p1"}}}' ;;
+  "tab create") n="$(next tab)"; printf '{"id":"t","result":{"tab":{"tab_id":"wT:t%s"},"root_pane":{"pane_id":"wT:p%s"}}}\n' "$n" "$n" ;;
+  "pane process-info")
+    if [ -f "$FAKE_HERDR_STATE/pane-busy" ]; then
+      echo '{"result":{"process_info":{"shell_pid":1,"foreground_processes":[{"name":"2.1.266","argv0":"claude"}]}}}'
+    else
+      echo '{"result":{"process_info":{"shell_pid":1,"foreground_processes":[{"name":"zsh","argv0":"zsh"}]}}}'
+    fi ;;
+  "pane wait-output")
+    if [ -f "$FAKE_HERDR_STATE/no-prompt" ]; then
+      echo '{"error":{"code":"pane_wait_timeout","message":"no match before timeout"}}' >&2; exit 1
+    fi
+    echo '{"id":"t","result":{"type":"pane_wait_output","matched":true}}' ;;
+  "agent list") if [ -f "$FAKE_HERDR_STATE/agents.json" ]; then cat "$FAKE_HERDR_STATE/agents.json"; else echo '{"result":{"agents":[]}}'; fi ;;
+  "agent get") echo '{"result":{"agent":{"agent_status":"idle","agent_session":{"value":"sess-test-1"}}}}' ;;
+  "agent prompt")
+    if [ -f "$FAKE_HERDR_STATE/stall" ]; then
+      echo '{"error":{"code":"agent_prompt_stalled","message":"agent prompt produced no observed state change within 5000 ms"}}' >&2; exit 1
+    fi
+    echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent start")
+    if [ -f "$FAKE_HERDR_STATE/agent-start-fails" ]; then
+      echo '{"error":{"code":"fake_agent_start_failed","message":"pane is not ready"}}' >&2; exit 1
+    fi
+    echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
+  "agent read") cat "$FAKE_HERDR_STATE/screen.txt" 2>/dev/null || true ;;
+  *) echo '{"result":{}}' ;;
+esac

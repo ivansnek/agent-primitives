@@ -1,0 +1,4 @@
+name: agent-primitives
+version: "0.1.0"
+license: MIT
+description: Agent primitives for Claude Code — the herd plan-execution engine and the turbo-fullstack skill pack for pnpm + Turbo monorepos.

@@ -1,0 +1,5 @@
+name: herd
+version: "0.6.0"
+license: MIT
+description: Sequential plan execution in herdr-managed Claude Code sessions — launcher, orchestrator, worker briefs, security audit and review stages.
+target: claude

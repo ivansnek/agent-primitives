@@ -1,0 +1,5 @@
+name: turbo-fullstack
+version: "0.1.0"
+license: MIT
+description: Skills and an example herd preset for pnpm + Turbo full-stack monorepos (NestJS API, Next.js web, Expo mobile, Supabase).
+target: claude

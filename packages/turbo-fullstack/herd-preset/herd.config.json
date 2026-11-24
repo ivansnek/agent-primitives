@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "planDirs": ["docs/superpowers/plans"],
+  "specDirs": ["docs/superpowers/specs"],
+  "worktreeDir": ".claude/worktrees",
+  "runsDir": ".claude/herd-runs",
+  "defaultBase": "main",
+  "testCommand": "pnpm typecheck && pnpm lint && pnpm check:i18n && TURBO_SCM_BASE={{BASE}} pnpm test:affected",
+  "prepScript": "apm_modules/ivansnek/agent-primitives/packages/turbo-fullstack/herd-preset/prep-worktree.sh",
+  "reviewStandards": "apm_modules/ivansnek/agent-primitives/packages/turbo-fullstack/herd-preset/review-standards.md",
+  "disallowedTools": [
+    "Bash(pnpm db:reset)", "Bash(pnpm db:reset:*)",
+    "Bash(pnpm db:migrate:dev)", "Bash(pnpm db:migrate:dev:*)",
+    "Bash(pnpm db:migrate:prod)", "Bash(pnpm db:migrate:prod:*)",
+    "Bash(supabase db:*)", "Bash(npx supabase db:*)",
+    "Bash(supabase migration up)", "Bash(supabase migration up:*)",
+    "Bash(npx supabase migration up)", "Bash(npx supabase migration up:*)"
+  ]
+}
