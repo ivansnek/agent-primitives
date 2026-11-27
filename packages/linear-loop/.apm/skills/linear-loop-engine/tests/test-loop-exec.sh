@@ -151,6 +151,49 @@ assert_eq "$(led .stack_tip)" feat/eng-11 "stack tip stays"
 fresh; mkdir -p "$(dirname "$hj")"; printf '{"status":"done"}' > "$hj"
 assert_contains "$(err unit-done ENG-12)" "herd: error: loop: ENG-12 has not been executed" "a leftover herd run is not this unit's"
 
+# ---- a launch that failed half way: exec-resume records the unit --------------------
+fresh; : > "$FAKE_HERDR_STATE/agent-start-fails"
+assert_contains "$(err exec ENG-12)" "retry with --resume eng-12" "herd asks for a resume"
+assert_file "$hj" "herd left its run behind"
+assert_eq "$(led '.units[1] | .phase + " " + (.branch | tostring)')" "pending null" "failed launch records nothing"
+assert_contains "$(err exec ENG-12)" "herd: error: branch already exists" "exec cannot run again"
+cp "$run/run.json" "$r/before.json"
+assert_exit 1 "$LOOP/scripts/loop.sh" "$run" exec-resume ENG-12
+if cmp -s "$run/run.json" "$r/before.json"; then pass; else fail "failed resume recorded something"; fi
+assert_no_file "$wt/$spec" "failed resume carries nothing"
+rm "$FAKE_HERDR_STATE/agent-start-fails"
+assert_eq "$(L exec-resume eng-12 2>/dev/null)" "HERD-RUN $hj ORCH eng-12-orch" "resume line"
+assert_eq "$(led '.units[1] | .phase + " " + .branch + " " + .herd_slug')" "executing feat/eng-12 eng-12" "resume records the unit"
+assert_file "$wt/$spec" "resume carries the spec"; assert_file "$wt/docs/adr/0001-x.md" "and the ADR"
+assert_file "$wt/docs/superpowers/specs/epic.md" "and the pending epic design"
+assert_file "$wt/docs/adr/0009-epic.md" "and its ADR"
+assert_eq "$(led '.units[0].carried_by')" ENG-12 "resume sets carried_by"
+commit_wt; herd_done
+assert_eq "$(L unit-done ENG-12 2>/dev/null)" "DONE feat/eng-12" "unit-done after a resumed launch"
+assert_no_file "$r/$spec" "and cleans up"; assert_no_file "$r/docs/superpowers/specs/epic.md" "carried design too"
+
+# a recorded unit is only resumed: no carry, no ledger write
+fresh; L exec ENG-12 >/dev/null 2>&1; rm "$wt/$spec"; L unit-set ENG-12 .phase '"failed"'; cp "$run/run.json" "$r/before.json"
+assert_eq "$(L exec-resume ENG-12 2>/dev/null)" "HERD-RUN $hj ORCH eng-12-orch" "recorded unit resumes"
+if cmp -s "$run/run.json" "$r/before.json"; then pass; else fail "resume of a recorded unit wrote the ledger"; fi
+assert_no_file "$wt/$spec" "recorded unit: nothing carried again"
+
+# an unrecorded unit that exec would refuse, or that is finished, is not resumed at all
+refused() {                  # JQ_PATH JSON MESSAGE
+  fresh; : > "$FAKE_HERDR_STATE/agent-start-fails"; L exec ENG-12 >/dev/null 2>&1 || true
+  rm "$FAKE_HERDR_STATE/agent-start-fails"; L unit-set ENG-12 "$1" "$2"
+  cp "$run/run.json" "$r/before.json"; : > "$FAKE_HERDR_LOG"
+  assert_contains "$(err exec-resume ENG-12)" "herd: error: loop: $3" "exec-resume refuses $1=$2"
+  if cmp -s "$run/run.json" "$r/before.json"; then pass; else fail "refused resume wrote the ledger ($1=$2)"; fi
+  assert_not_contains "$(cat "$FAKE_HERDR_LOG")" "agent start" "herd not resumed ($1=$2)"
+}
+refused .kind '"epic-design"' "ENG-12 is not an issue unit"
+refused .spec null "ENG-12 needs a spec and a plan"
+refused .plan null "ENG-12 needs a spec and a plan"
+refused .spec '"../x.md"' "cannot carry ../x.md"
+refused .phase '"done"' "ENG-12 is done"
+refused .phase '"skipped"' "ENG-12 is skipped"
+
 # ---- unit-skip ------------------------------------------------------------------
 fresh; L exec ENG-12 >/dev/null 2>&1
 assert_eq "$(L unit-skip eng-12)" "DEPENDENTS" "empty line still printed"

@@ -539,43 +539,38 @@ carry() {                    # ROOT WORKTREE REL: copy if missing; never through
   if [ -e "$dest" ] || [ -L "$dest" ]; then return 0; fi
   mkdir -p "$(dirname "$dest")" && cp -- "$1/$3" "$dest"
 }
-exec_unit() {                # ID -> HERD-RUN line
-  local root adr wt tip plan item dir rel e ok flag v carried_json
-  local items=() epics=() carried=() flags=()
-  unit_ctx "$1"
+# What exec and exec-resume share. A launch happens between the two halves.
+exec_prepare() {             # (after unit_ctx) refuses what cannot be executed; sets PLAN, EPICS, ITEMS
+  local root adr item dir rel e
+  EPICS=(); ITEMS=()
   root="$(L .root)"; adr="$(loop_adr_dir "$root")" || exit 1
   [ "$(unit_get "$I" .kind)" = issue ] || herd_die "loop: $UNIT is not an issue unit: only those are executed"
-  plan="$(unit_get "$I" '.plan // ""')"
-  [ -n "$plan" ] && [ -n "$(unit_get "$I" '.spec // ""')" ] || herd_die "loop: $UNIT needs a spec and a plan before exec"
-  tip="$(L '.stack_tip // ""')"
-  [ -n "$tip" ] || herd_die "loop: no stack tip in the ledger"
+  PLAN="$(unit_get "$I" '.plan // ""')"
+  [ -n "$PLAN" ] && [ -n "$(unit_get "$I" '.spec // ""')" ] || herd_die "loop: $UNIT needs a spec and a plan before exec"
   # finished epic designs above this unit that no branch carries yet
-  while IFS= read -r e; do epics+=("$e"); done < <(jq -r --argjson i "$I" --argjson map "$(map_parents)" "$CHAIN_DEF"'
+  while IFS= read -r e; do EPICS+=("$e"); done < <(jq -r --argjson i "$I" --argjson map "$(map_parents)" "$CHAIN_DEF"'
     chain(.units[$i].id) as $up
     | .units | to_entries[]
     | select(.value.kind == "epic-design" and .value.phase == "done" and .value.carried_by == null
              and (.value.id | ascii_upcase | IN($up[])))
     | .key' "$RUN_JSON")
   # everything is checked before the launch: after it, exec cannot be run again (the branch exists)
-  for e in "$I" ${epics[@]+"${epics[@]}"}; do
+  for e in "$I" ${EPICS[@]+"${EPICS[@]}"}; do
     while IFS= read -r item; do
       dir="${item%%$'\t'*}"; rel="${item#*$'\t'}"
       file_under "$root" "$dir" "$rel" || herd_die "loop: cannot carry $rel: not a file under $root/$dir"
-      items+=("$e"$'\t'"$item")
+      ITEMS+=("$e"$'\t'"$item")
     done < <(unit_files "$e" "$adr")
   done
-  for flag in worker_model:--worker-model review_model:--review-model execution:--execution; do
-    v="$(L ".herd.${flag%%:*} // \"\"")"
-    [ -z "$v" ] || flags+=("${flag#*:}" "$v")
-  done
-
-  herd_launch --slug "$USLUG" --base "$tip" ${flags[@]+"${flags[@]}"} "$plan"
-
+}
+exec_record() {              # LOG_NOTE (after exec_prepare and a launch) carries the files, records the run
+  local root wt item dir rel e ok carried_json carried=()
+  root="$(L .root)"
   # herd is running now: a copy that fails is logged, and the run is recorded all the same
   wt="$root/.claude/worktrees/$USLUG"
-  for e in "$I" ${epics[@]+"${epics[@]}"}; do
+  for e in "$I" ${EPICS[@]+"${EPICS[@]}"}; do
     ok=1
-    for item in ${items[@]+"${items[@]}"}; do
+    for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
       [ "${item%%$'\t'*}" = "$e" ] || continue
       item="${item#*$'\t'}"; dir="${item%%$'\t'*}"; rel="${item#*$'\t'}"
       [ "$dir" != docs/superpowers/plans ] || continue          # herd brings the plan itself
@@ -586,15 +581,40 @@ exec_unit() {                # ID -> HERD-RUN line
     if [ "$e" != "$I" ] && [ "$ok" = 1 ]; then carried+=("$(unit_get "$e" .id)"); fi
   done
   carried_json="$(jq -nc '$ARGS.positional' --args ${carried[@]+"${carried[@]}"})"
-  write "executing $UNIT on feat/$USLUG (base $tip)" \
+  write "executing $UNIT on feat/$USLUG ($1)" \
     '.units[$i] |= (.herd_slug = $slug | .branch = "feat/" + $slug | .phase = "executing")
      | .units |= map(if .id | IN($carried[]) then .carried_by = $unit else . end)' \
     --argjson i "$I" --arg slug "$USLUG" --arg unit "$UNIT" --argjson carried "$carried_json"
+}
+exec_unit() {                # ID -> HERD-RUN line
+  local tip flag v flags=()
+  unit_ctx "$1"
+  exec_prepare
+  tip="$(L '.stack_tip // ""')"
+  [ -n "$tip" ] || herd_die "loop: no stack tip in the ledger"
+  for flag in worker_model:--worker-model review_model:--review-model execution:--execution; do
+    v="$(L ".herd.${flag%%:*} // \"\"")"
+    [ -z "$v" ] || flags+=("${flag#*:}" "$v")
+  done
+
+  herd_launch --slug "$USLUG" --base "$tip" ${flags[@]+"${flags[@]}"} "$PLAN"
+  exec_record "base $tip"
   exec_line
 }
+# A unit with no branch is one whose exec launch failed part way (or was cut off before the
+# ledger write): once herd resumes it, it is recorded here as exec would have.
 exec_resume() {              # ID -> HERD-RUN line
+  local phase
   unit_ctx "$1"
-  herd_launch --resume "$USLUG"
+  if [ -n "$(unit_get "$I" '.branch // ""')" ]; then
+    herd_launch --resume "$USLUG"
+  else
+    phase="$(unit_get "$I" .phase)"
+    case "$phase" in done|skipped) herd_die "loop: $UNIT is $phase and was never recorded: not resuming it" ;; esac
+    exec_prepare
+    herd_launch --resume "$USLUG"
+    exec_record "resumed"
+  fi
   exec_line
 }
 herd_status() {              # ID -> "<status> [<failed stage>]" | missing
