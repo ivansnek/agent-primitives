@@ -194,6 +194,51 @@ refused .spec '"../x.md"' "cannot carry ../x.md"
 refused .phase '"done"' "ENG-12 is done"
 refused .phase '"skipped"' "ENG-12 is skipped"
 
+# ---- killed before the ledger write: herd's run is adopted without --resume ---------
+killed() {                   # a launched herd run the loop ledger knows nothing about
+  fresh; cp "$run/run.json" "$r/unrecorded.json"; L exec ENG-12 >/dev/null 2>&1
+  cp "$r/unrecorded.json" "$run/run.json"; rm "$wt/$spec" "$wt/docs/adr/0001-x.md" "$wt/docs/superpowers/specs/epic.md"
+  : > "$FAKE_HERDR_LOG"
+}
+orch_live() { printf '{"result":{"agents":[{"name":"eng-12-orch"}]}}\n' > "$FAKE_HERDR_STATE/agents.json"; }
+adopted() {                  # STATE
+  assert_eq "$(L exec-resume eng-12 2>/dev/null || true)" "HERD-RUN $hj ORCH eng-12-orch" "$1: same line"
+  assert_eq "$(led '.units[1] | .phase + " " + .branch + " " + .herd_slug')" "executing feat/eng-12 eng-12" "$1: recorded"
+  assert_file "$wt/$spec" "$1: spec carried"; assert_file "$wt/docs/adr/0001-x.md" "$1: ADR carried"
+  assert_file "$wt/docs/superpowers/specs/epic.md" "$1: epic design carried"
+  assert_eq "$(led '.units[0].carried_by')" ENG-12 "$1: carried_by"
+  assert_not_contains "$(cat "$FAKE_HERDR_LOG")" "agent start" "$1: herd not resumed"
+  assert_not_contains "$(cat "$FAKE_HERDR_LOG")" "tab create" "$1: no new tab"
+}
+killed; orch_live; adopted "live orchestrator"
+rm "$FAKE_HERDR_STATE/agents.json"; commit_wt; herd_done
+assert_eq "$(L unit-done ENG-12 2>/dev/null || true)" "DONE feat/eng-12" "unit-done after adopting a live run"
+killed; herd_done; adopted "finished run"
+commit_wt
+assert_eq "$(L unit-done ENG-12 2>/dev/null || true)" "DONE feat/eng-12" "unit-done after adopting a finished run"
+killed; herd_done; orch_live; adopted "finished run, orchestrator still up"
+
+# a leftover run under the same slug is never recorded, whatever its state
+for field in '.base="other"' '.plans[0].path="/elsewhere/plan.md"' '.plans += .plans' 'del(.plans)' garbage; do
+  for state in live done idle; do
+    killed
+    if [ "$field" = garbage ]; then printf 'not json' > "$hj"; else jq "$field" "$hj" > "$r/t" && mv "$r/t" "$hj"; fi
+    case "$state" in live) orch_live ;; done) [ "$field" = garbage ] || herd_done ;; esac
+    cp "$run/run.json" "$r/before.json"
+    assert_contains "$(err exec-resume ENG-12)" "herd: error: loop: ENG-12: the herd run at $hj is not this unit's" "mismatch $field $state"
+    if cmp -s "$run/run.json" "$r/before.json"; then pass; else fail "mismatched run recorded ($field $state)"; fi
+    assert_no_file "$wt/$spec" "mismatch carries nothing ($field $state)"
+    assert_not_contains "$(cat "$FAKE_HERDR_LOG")" "agent start" "mismatch not resumed ($field $state)"
+  done
+done
+# the existing refusals come first
+for change in '.phase "done" ENG-12 is done' '.phase "skipped" ENG-12 is skipped' '.kind "epic-design" ENG-12 is not an issue unit' '.spec null ENG-12 needs a spec' '.adrs ["docs/adr/gone.md"] cannot carry docs/adr/gone.md'; do
+  read -r path value message <<<"$change"
+  killed; orch_live; L unit-set ENG-12 "$path" "$value"; cp "$run/run.json" "$r/before.json"
+  assert_contains "$(err exec-resume ENG-12)" "herd: error: loop: $message" "live run, refused: $change"
+  if cmp -s "$run/run.json" "$r/before.json"; then pass; else fail "refused adoption wrote the ledger ($change)"; fi
+done
+
 # ---- unit-skip ------------------------------------------------------------------
 fresh; L exec ENG-12 >/dev/null 2>&1
 assert_eq "$(L unit-skip eng-12)" "DEPENDENTS" "empty line still printed"

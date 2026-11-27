@@ -601,10 +601,21 @@ exec_unit() {                # ID -> HERD-RUN line
   exec_record "base $tip"
   exec_line
 }
-# A unit with no branch is one whose exec launch failed part way (or was cut off before the
-# ledger write): once herd resumes it, it is recorded here as exec would have.
+# Whether a herd run found under the unit's slug is the one exec would have launched for it: one
+# plan, this unit's, at the path herd derives from it, on the current stack tip.
+own_herd_run() {             # (after exec_prepare) HERD_RUN_JSON
+  local root dir
+  root="$(cd "$(L .root)" && pwd -P)" || return 1                    # herd records canonical paths
+  dir="$(cd "$(L .root)/$(dirname "$PLAN")" && pwd -P)" || return 1
+  jq -es --arg plan "$root/.claude/worktrees/$USLUG/${dir#"$root"/}/${PLAN##*/}" --arg base "$(L '.stack_tip // ""')" '
+    length == 1 and (.[0] | .base == $base and (.plans | length) == 1 and .plans[0].path == $plan)' \
+    "$1" >/dev/null 2>&1
+}
+# A unit with no branch is one whose exec launch failed part way, or was cut off before the
+# ledger write. It is recorded here as exec would have: at once when herd's run needs no resume
+# (herd refuses one while its orchestrator is live or after it finished), else after resuming it.
 exec_resume() {              # ID -> HERD-RUN line
-  local phase
+  local phase j
   unit_ctx "$1"
   if [ -n "$(unit_get "$I" '.branch // ""')" ]; then
     herd_launch --resume "$USLUG"
@@ -612,8 +623,20 @@ exec_resume() {              # ID -> HERD-RUN line
     phase="$(unit_get "$I" .phase)"
     case "$phase" in done|skipped) herd_die "loop: $UNIT is $phase and was never recorded: not resuming it" ;; esac
     exec_prepare
-    herd_launch --resume "$USLUG"
-    exec_record "resumed"
+    j="$(herd_ledger)"
+    if [ ! -f "$j" ]; then
+      herd_launch --resume "$USLUG"                                  # herd says what is missing
+      exec_record "resumed"
+    else
+      own_herd_run "$j" \
+        || herd_die "loop: $UNIT: the herd run at $j is not this unit's (its plan or base differs): not recording it"
+      if herd_agent_live "$USLUG-orch" || [ "$(jq -r .status "$j")" = done ]; then
+        exec_record "adopted the existing herd run"
+      else
+        herd_launch --resume "$USLUG"
+        exec_record "resumed"
+      fi
+    fi
   fi
   exec_line
 }
