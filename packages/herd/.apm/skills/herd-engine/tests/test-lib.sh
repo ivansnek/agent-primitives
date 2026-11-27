@@ -129,4 +129,18 @@ assert_contains "$(herd_execution_rules linear /wt feat/x)" "superpowers:executi
 assert_contains "$(herd_execution_rules subagent /wt feat/x)" "superpowers:subagent-driven-development" "subagent rules name the SDD skill"
 assert_contains "$(herd_execution_rules subagent /wt feat/x)" "\`/wt\` on branch \`feat/x\`" "subagent rules pin the worktree and branch"
 
+# agent-talk helpers live in lib.sh (shared with linear-loop)
+use_fake_herdr
+printf '{"result":{"agents":[{"name":"a1"}]}}\n' > "$FAKE_HERDR_STATE/agents.json"
+assert_eq "$(herd_agent_prompt_wait a1 hello 1000)" "SETTLED idle" "prompt_wait settles"
+assert_eq "$(herd_agent_wait a1 1000)" "SETTLED idle" "wait settles"
+touch "$FAKE_HERDR_STATE/stall"
+out="$(herd_agent_prompt_wait a1 hello 1000)" && rc=0 || rc=$?
+assert_eq "$out $rc" "STALLED 7" "prompt_wait reports a stall"
+rm "$FAKE_HERDR_STATE/stall"; rm "$FAKE_HERDR_STATE/agents.json"
+out="$(herd_agent_prompt_wait gone hello 1000)" && rc=0 || rc=$?
+assert_eq "$out $rc" "GONE 4" "prompt_wait reports a dead agent"
+assert_exit 0 herd_agent_exit gone
+assert_contains "$("$HERDR_BIN" workspace create --cwd /x --label l --no-focus)" '"root_pane"' "fake herdr creates workspaces"
+
 finish

@@ -340,3 +340,53 @@ herd_notify() {                                                      # TITLE [BO
   if [ -n "${2:-}" ]; then "$HERDR_BIN" notification show "$1" --body "$2" --sound "${3:-done}" >/dev/null 2>&1 || true
   else "$HERDR_BIN" notification show "$1" --sound "${3:-done}" >/dev/null 2>&1 || true; fi
 }
+
+# ---- talking to an agent -------------------------------------------------------
+# Shared by stage.sh and linear-loop. Poll interval: HERD_POLL_SECONDS (default 2), read per call.
+herd_agent_exit() {                                                  # NAME -> 0 once no live agent has the name
+  "$HERDR_BIN" agent send-keys "$1" esc >/dev/null 2>&1 || true     # close any open dialog first (probe 2026-09-05: a dialog swallows /exit)
+  "$HERDR_BIN" agent prompt "$1" "/exit" >/dev/null 2>&1 || true
+  local i
+  for i in $(seq 1 30); do herd_agent_live "$1" || return 0; sleep "${HERD_POLL_SECONDS:-2}"; done
+  "$HERDR_BIN" agent send-keys "$1" ctrl+c ctrl+c >/dev/null 2>&1 || true
+  for i in $(seq 1 10); do herd_agent_live "$1" || return 0; sleep "${HERD_POLL_SECONDS:-2}"; done
+  return 1
+}
+
+# -> SETTLED <status> (0) | GONE (4) | STALLED (7) | WAIT-ERROR (5)
+herd_agent_prompt_wait() {                                           # NAME TEXT [TIMEOUT_MS]
+  local name text timeout err out
+  name="${1:?NAME}"; text="${2:?TEXT}"; timeout="${3:-14400000}"
+  herd_agent_live "$name" || { echo "GONE"; return 4; }
+  err="$(mktemp)"
+  if out="$("$HERDR_BIN" agent prompt "$name" "$text" --wait --until idle --until done --until blocked --timeout "$timeout" 2>"$err")"; then
+    rm -f "$err"; echo "SETTLED $(herd_json_field "$out" '.result.agent.agent_status')"
+  elif grep -q agent_prompt_stalled "$err"; then
+    rm -f "$err"; echo "STALLED"; return 7        # text was typed, but no lifecycle change in 5 s (local slash command, dialog, or nothing happened)
+  else
+    cat "$err" >&2; rm -f "$err"; echo "WAIT-ERROR"; return 5
+  fi
+}
+
+# -> SETTLED <status> (0) | GONE (4) | WAIT-ERROR (5)
+herd_agent_wait() {                                                  # NAME [TIMEOUT_MS]
+  local name timeout out
+  name="${1:?NAME}"; timeout="${2:-14400000}"
+  herd_agent_live "$name" || { echo "GONE"; return 4; }
+  if out="$("$HERDR_BIN" agent wait "$name" --until idle --until done --until blocked --timeout "$timeout")"; then
+    echo "SETTLED $(herd_json_field "$out" '.result.agent.agent_status')"
+  else
+    echo "WAIT-ERROR"; return 5
+  fi
+}
+
+herd_agent_screen() {                                                # NAME [LINES] -> screen text
+  local name="${1:?NAME}"
+  if [ -n "${2:-}" ]; then "$HERDR_BIN" agent read "$name" --source recent-unwrapped --lines "$2"
+  else "$HERDR_BIN" agent read "$name" --source visible; fi
+}
+
+herd_agent_keys() {                                                  # NAME KEY...
+  local name="${1:?NAME}"; shift
+  "$HERDR_BIN" agent send-keys "$name" "$@" >/dev/null
+}

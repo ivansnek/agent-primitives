@@ -9,7 +9,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 RUN_DIR="${1:?usage: stage.sh RUN_DIR COMMAND [ARGS]}"; CMD="${2:?usage: stage.sh RUN_DIR COMMAND [ARGS]}"; shift 2
 RUN_JSON="$RUN_DIR/run.json"; [ -f "$RUN_JSON" ] || herd_die "no ledger: $RUN_JSON"
 LOG="$RUN_DIR/orchestrator.log"
-POLL="${HERD_POLL_SECONDS:-2}"
 
 L() { herd_ledger_get "$RUN_JSON" "$1"; }
 S() { herd_ledger_set "$RUN_JSON" "$1" "$2"; }
@@ -28,15 +27,7 @@ kind_ok() { case "$1" in plan|audit|review) ;; *) herd_die "kind must be plan, a
 agent_of() { L ".plans[$1].$2.agent"; }          # IDX KIND
 sentinel() { echo "$RUN_DIR/$2-$1"; }            # N KIND -> path prefix (…/plan-N, …/audit-N or …/review-N)
 
-exit_agent() {               # NAME -> 0 once no live agent has the name
-  "$HERDR_BIN" agent send-keys "$1" esc >/dev/null 2>&1 || true     # close any open dialog first (probe 2026-09-05: a dialog swallows /exit)
-  "$HERDR_BIN" agent prompt "$1" "/exit" >/dev/null 2>&1 || true
-  local i
-  for i in $(seq 1 30); do herd_agent_live "$1" || return 0; sleep "$POLL"; done
-  "$HERDR_BIN" agent send-keys "$1" ctrl+c ctrl+c >/dev/null 2>&1 || true
-  for i in $(seq 1 10); do herd_agent_live "$1" || return 0; sleep "$POLL"; done
-  return 1
-}
+exit_agent() { herd_agent_exit "$1"; }   # NAME -> 0 once no live agent has the name
 
 start_worker() {             # IDX KIND PANE [extra claude args...]
   local i="$1" kind="$2" pane="$3"; shift 3
@@ -167,25 +158,8 @@ case "$CMD" in
   spawn-plan) spawn "${1:?N}" plan ;;
   spawn-audit) spawn "${1:?N}" audit; i="$(idx "$1")"; echo "RANGE $(L ".plans[$i].audit.head_before")..HEAD" ;;
   spawn-review) spawn "${1:?N}" review; i="$(idx "$1")"; echo "RANGE $(L ".plans[$i].review.head_before")..HEAD" ;;
-  prompt-wait)
-    name="${1:?NAME}"; text="${2:?TEXT}"; timeout="${3:-14400000}"
-    herd_agent_live "$name" || { echo "GONE"; exit 4; }
-    err="$(mktemp)"
-    if out="$("$HERDR_BIN" agent prompt "$name" "$text" --wait --until idle --until done --until blocked --timeout "$timeout" 2>"$err")"; then
-      rm -f "$err"; echo "SETTLED $(herd_json_field "$out" '.result.agent.agent_status')"
-    elif grep -q agent_prompt_stalled "$err"; then
-      rm -f "$err"; echo "STALLED"; exit 7          # text was typed, but no lifecycle change in 5 s (local slash command, dialog, or nothing happened)
-    else
-      cat "$err" >&2; rm -f "$err"; echo "WAIT-ERROR"; exit 5
-    fi ;;
-  wait)
-    name="${1:?NAME}"; timeout="${2:-14400000}"
-    herd_agent_live "$name" || { echo "GONE"; exit 4; }
-    if out="$("$HERDR_BIN" agent wait "$name" --until idle --until done --until blocked --timeout "$timeout")"; then
-      echo "SETTLED $(herd_json_field "$out" '.result.agent.agent_status')"
-    else
-      echo "WAIT-ERROR"; exit 5
-    fi ;;
+  prompt-wait) herd_agent_prompt_wait "$@" ;;
+  wait) herd_agent_wait "$@" ;;
   check)
     n="${1:?N}"; kind="${2:?plan|audit|review}"; kind_ok "$kind"; i="$(idx "$n")"
     name="$(agent_of "$i" "$kind")"; done_f="$(sentinel "$n" "$kind").done"; failed_f="$(sentinel "$n" "$kind").failed"
@@ -224,11 +198,8 @@ case "$CMD" in
     echo "NONE"
     "$HERDR_BIN" agent read "$name" --source visible 2>/dev/null || true
     exit 3 ;;
-  screen)
-    name="${1:?NAME}"
-    if [ -n "${2:-}" ]; then "$HERDR_BIN" agent read "$name" --source recent-unwrapped --lines "$2"
-    else "$HERDR_BIN" agent read "$name" --source visible; fi ;;
-  keys) name="${1:?NAME}"; shift; "$HERDR_BIN" agent send-keys "$name" "$@" >/dev/null ;;
+  screen) herd_agent_screen "$@" ;;
+  keys) herd_agent_keys "$@" ;;
   restart)
     n="${1:?N}"; kind="${2:?plan|audit|review}"; kind_ok "$kind"; i="$(idx "$n")"
     name="$(agent_of "$i" "$kind")"; pane="$(L ".plans[$i].$kind.pane")"; sid="$(L ".plans[$i].$kind.session_id")"
