@@ -35,21 +35,32 @@ UNIT_DEF='def new_unit($slug):
 # Unit ids name branches, directories and agents: the rule of loop_uslug, anchored to the whole string.
 ID_DEF='def valid_id: ascii_downcase | test("\\A[a-z][a-z0-9]*-[0-9]+\\z");'
 
-render() { "$LOOP_SCRIPTS_DIR/progress.sh" "$RUN_DIR"; }
+# Never fatal: it runs after the change is saved, and the caller's notification and output must
+# still happen.
+render() {
+  "$LOOP_SCRIPTS_DIR/progress.sh" "$RUN_DIR" || herd_log "loop: warning: could not render PROGRESS.md in $RUN_DIR"
+}
+# What a ledger must hold to be written: every shape progress.sh dereferences.
+LEDGER_OK='length == 1 and (.[0] | type == "object"
+  and (.units | type) == "array"
+  and all(.units[]; type == "object" and (.id | type) == "string"
+        and (.title | type | IN("null", "string"))
+        and (.adrs | . == null or (type == "array" and all(.[]; type == "string"))))
+  and ([.units[].id | ascii_upcase] | length == (unique | length))
+  and (.skipped | . == null or (type == "array" and all(.[]; type == "object")))
+  and (.pause | type | IN("null", "object")))'
 log() {                      # TEXT -> one line in the log
   local text="$*"
   text="${text//$'\r'/ }"
   printf '%s %s\n' "$(herd_now)" "${text//$'\n'/ }" >> "$LOG"
 }
 # The only way this script writes the ledger: one atomic jq write, an optional log line, a fresh
-# PROGRESS.md. The filter sees $now. A result that is no longer a ledger is refused.
+# PROGRESS.md. The filter sees $now. A result that fails LEDGER_OK is refused.
 write() {                    # LOG_TEXT|"" FILTER [jq args...]
   local text="$1" filter="$2" tmp; shift 2
   tmp="$(mktemp "$RUN_JSON.XXXXXX")"
   if jq "$@" --arg now "$(herd_now)" "($filter) | .updated_at = \$now" "$RUN_JSON" > "$tmp" \
-     && jq -es 'length == 1 and (.[0] | type == "object" and (.units | type) == "array"
-          and all(.units[]; type == "object" and (.id | type) == "string")
-          and ([.units[].id | ascii_upcase] | length == (unique | length)))' "$tmp" >/dev/null 2>&1; then
+     && jq -es "$LEDGER_OK" "$tmp" >/dev/null 2>&1; then
     mv "$tmp" "$RUN_JSON"
   else
     rm -f "$tmp"; herd_die "loop: ledger write failed (ledger unchanged): $RUN_JSON"

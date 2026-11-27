@@ -196,4 +196,40 @@ assert_exit 1 "$LOOP/scripts/loop.sh" "$run" fail
 : > "$FAKE_HERDR_LOG"; stale; L done; wrote "done"
 assert_eq "$(led .status)" done "done"
 assert_contains "$(cat "$FAKE_HERDR_LOG")" "notification show linear-loop eng-1-loop" "done notifies"
+
+# ---- a write progress.sh could not render is refused ------------------------------------
+r="$(make_repo)"; run="$(make_loop_run "$r")"; printf 'Q?\n' > "$r/q.md"; snap
+bad() {
+  assert_exit 1 "$LOOP/scripts/loop.sh" "$run" "$@"
+  assert_contains "$(err "$@")" "herd: error: loop: ledger write failed" "refused: $*"
+}
+bad unit-set-str ENG-12 .adrs docs/adr/1.md
+bad unit-set ENG-12 .adrs '[1]'
+bad unit-set ENG-12 .adrs '{"a":"b"}'
+bad unit-set ENG-12 .adrs false
+bad unit-set ENG-12 .title '{"a":"b"}'
+bad ledger set .skipped '"x"'
+bad ledger set .skipped 3
+bad ledger set .skipped '["ENG-1"]'
+bad ledger set .pause '"x"'
+unchanged "unrenderable writes"
+L unit-set ENG-12 .adrs null; L unit-set ENG-12 .title null; L ledger set .skipped null
+L ledger set .skipped '[{"id":"ENG-1","reason":"completed"}]'; L unit-set ENG-12 .adrs '["docs/adr/1.md"]'
+assert_exit 0 "$LOOP/scripts/progress.sh" "$run"
+
+# ---- a render failure after the write does not undo or silence it -------------------------
+r="$(make_repo)"; run="$(make_loop_run "$r")"; printf 'Q?\n' > "$r/q.md"
+mkdir "$run/PROGRESS.md"; chmod 555 "$run/PROGRESS.md"          # progress.sh cannot replace it
+assert_exit 1 "$LOOP/scripts/progress.sh" "$run"
+: > "$FAKE_HERDR_LOG"
+out="$(L pause adr ENG-12 "$r/q.md" 2>"$r/err")" && rc=0 || rc=$?
+assert_eq "$out $rc" "$run/pause-01.md 0" "pause still prints the path"
+assert_contains "$(cat "$r/err")" "herd: loop: warning: could not render PROGRESS.md" "render failure is reported"
+assert_contains "$(cat "$FAKE_HERDR_LOG")" "notification show linear-loop eng-1-loop: needs you" "pause still notifies"
+assert_eq "$(led .status)" waiting-human "pause saved"
+assert_exit 0 "$LOOP/scripts/loop.sh" "$run" unpause
+assert_exit 0 "$LOOP/scripts/loop.sh" "$run" note "still logging"
+: > "$FAKE_HERDR_LOG"; assert_exit 0 "$LOOP/scripts/loop.sh" "$run" fail boom
+assert_contains "$(cat "$FAKE_HERDR_LOG")" "notification show linear-loop eng-1-loop failed" "fail still notifies"
+chmod 755 "$run/PROGRESS.md"
 finish
