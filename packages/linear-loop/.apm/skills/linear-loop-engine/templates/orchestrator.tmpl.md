@@ -249,7 +249,8 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
       ID NN`. Then handle its result as above.
    c. **Spec review** (`ASK NN spec-ready <path>`).
       1. `unit-set-str ID .phase spec-review`. The message names the spec, a repo-relative path
-         S under `docs/superpowers/specs/`. No such file in `{{ROOT}}` → inbox "Your spec-ready
+         S under `docs/superpowers/specs/`. S is the brainstormer's text: look for `{{ROOT}}/S`
+         with your file-read tool, never a shell test. No such file in `{{ROOT}}` → inbox "Your spec-ready
          message must name the spec's repo-relative path, and the file must exist. Send
          spec-ready again." and Deliver.
       2. Spawn an advisor with `{{ADVISOR_REVIEW_TMPL}}`, `[SPEC_FILE]` = `{{ROOT}}/S`. Save its

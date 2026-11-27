@@ -114,6 +114,7 @@ for old in 'note "human ruling: <' 'ruling "<the rule>"' 'model on screen: <text
   hasnt "$flat" "$old" "no foreign placeholder on a command line: $old"
 done
 has "$flat" "limits it to \`[A-Za-z0-9 ._/:-]\`" "the one helper output quoted into a prompt is restricted"
+has "$flat" "with your file-read tool, never a shell test" "the brainstormer's spec path is checked without a shell"
 # inside a backticked command, a quoted argument holds only text the orchestrator authors
 cmdre='`(note|ruling|fail|prompt-wait|wait|keys|ledger|unit-set|unit-set-str|jq) [^`]*`'
 spans="$(printf '%s' "$flat" | grep -oE "$cmdre")"

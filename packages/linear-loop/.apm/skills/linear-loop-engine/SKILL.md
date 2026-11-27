@@ -195,6 +195,7 @@ it as a `recovery-cap` pause.
 | `map.json` | The Linear snapshot `order.sh` reads. |
 | `rulings.md` | Human rulings that bind later units; given to every later advisor. Created by the first one. |
 | `pause-NN.md` | Each question asked, `NN` from `01`. |
+| `tmp/` | Files the orchestrator writes to pass text it did not author (replies, errors, screen text) to a helper by path. Never cleaned. |
 | `units/<uslug>/issue.md` | Ticket snapshot. |
 | `units/<uslug>/brief.md` | Brainstormer brief. |
 | `units/<uslug>/outbox/NN.md` | Brainstormer messages. First line `kind: question \| approaches \| playback \| breakdown \| spec-ready`. |
