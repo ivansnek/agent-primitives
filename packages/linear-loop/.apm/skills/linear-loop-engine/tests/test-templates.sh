@@ -53,6 +53,10 @@ hasnt "$orch" "sonnet" "orchestrator hardcodes no model"
 # the ordering rule that keeps a resumed brainstorm from deleting its own finished sentinel
 outbox_at="$(printf '%s\n' "$orch" | grep -nF 'run `outbox-next ID` before anything else' | head -1 | cut -d: -f1)"
 assert_eq "${outbox_at:+found}" found "resume checks the outbox before liveness"
+# a sentinel on disk hides every outbox message: paths that send the worker back must clear it
+has "$orch" "rm -f U/bs.done" "an unapproved sentinel is removed before the worker is sent back"
+has "$orch" "always \`restart ID\` (it removes both sentinels" "a retry after bs.failed restarts, never just prompts"
+has "$orch" "\`outbox-next ID\` prints the open \`ASK NN …\` again" "a resumed session recovers NN"
 
 # ---- advisor prompts -------------------------------------------------------------
 answer="$(cat "$T/advisor-answer.tmpl.md")"; review="$(cat "$T/advisor-review.tmpl.md")"
