@@ -147,13 +147,22 @@ if [ -n "$RESUME" ]; then
       || herd_die "loop: design worktree is gone and the stack tip is not a commit: $TIP"
     restore=1
   fi
+  # The orchestrator only reports a failed run and stops, so a resume puts it back where it can
+  # go on: at its open question, before the map was final, or in the unit loop.
+  restored=""
+  if [ "$status" = failed ]; then
+    restored="$(jq -r 'if .pause != null then "waiting-human"
+      elif all(.units[]; .phase == "pending") then "created" else "running" end' "$RUN_JSON")" \
+      || herd_die "loop: unreadable ledger: $RUN_JSON"
+  fi
 
   if [ "$DRY_RUN" = 1 ]; then
     # --force: a directory that was deleted is still registered as a worktree
     [ "$restore" = 0 ] || echo "DRY-RUN: git worktree add --force --detach $DESIGN $TIP"
+    echo "DRY-RUN: $HERDR_BIN tab create --workspace $WS --cwd $ROOT --label orchestrator --no-focus"
+    [ -z "$restored" ] || echo "DRY-RUN: restore status failed -> $restored and clear failed_reason in $RUN_JSON"
     echo "DRY-RUN: set map_only false in $RUN_JSON"
     echo "DRY-RUN: re-render $RUN_DIR/orchestrator.md from $LOOP_TEMPLATES_DIR/orchestrator.tmpl.md, and PROGRESS.md"
-    echo "DRY-RUN: $HERDR_BIN tab create --workspace $WS --cwd $ROOT --label orchestrator --no-focus"
     dry_start "<pane>" "$MODEL" "$PROMPT"
     exit 0
   fi
@@ -162,13 +171,16 @@ if [ -n "$RESUME" ]; then
     git -C "$ROOT" worktree add -q --force --detach "$DESIGN" "$TIP" >&2 \
       || herd_die "loop: could not re-create the design worktree: $DESIGN"
   fi
-  herd_ledger_set "$RUN_JSON" .map_only false || herd_die "loop: could not update $RUN_JSON"
-  write_brief
   tab_json="$("$HERDR_BIN" tab create --workspace "$WS" --cwd "$ROOT" --label orchestrator --no-focus)" \
     || herd_die "loop: could not create a tab in workspace $WS (was it closed?)"
   PANE="$(herd_json_field "$tab_json" '.result.root_pane.pane_id')"
   [ -n "$PANE" ] || herd_die "loop: unexpected tab create response: $tab_json"
-  herd_ledger_set_str "$RUN_JSON" .orchestrator_pane "$PANE" || herd_die "loop: could not update $RUN_JSON"
+  # one write, after everything that can refuse the resume
+  ledger="$(jq -c --arg status "$restored" --arg pane "$PANE" '
+    (if $status == "" then . else .status = $status | .failed_reason = null end)
+    | .map_only = false | .orchestrator_pane = $pane' "$RUN_JSON")" || herd_die "loop: unreadable ledger: $RUN_JSON"
+  herd_ledger_set "$RUN_JSON" . "$ledger" || herd_die "loop: could not update $RUN_JSON"
+  write_brief
   start_orchestrator "$PANE" "$MODEL" "$PROMPT"
   report resumed
   exit 0

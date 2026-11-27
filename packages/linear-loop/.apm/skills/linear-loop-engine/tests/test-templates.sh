@@ -43,6 +43,9 @@ has "$orch" "dummy-advisor_answer_tmpl" "orchestrator reads the answer prompt"
 has "$orch" "dummy-advisor_review_tmpl" "orchestrator reads the review prompt"
 has "$orch" "must be the \`dummy-brainstorm_family\` family" "screen check names the brainstorm family"
 has "$orch" "/linear-loop --resume dummy-slug" "map-only stop says how to continue"
+# the resume refuses while this session lives, so every map-only stop says to exit it first
+assert_eq "$(printf '%s\n' "$orch" | tr '\n' ' ' | tr -s ' ' | grep -oF 'Exit this session (`/exit`), then continue with `/linear-loop --resume dummy-slug`' | wc -l | tr -d ' ')" 2 \
+  "both map-only stops say to exit first"
 has "$orch" "/execute-plans --resume" "a failed herd run points at herd's resume"
 has "$orch" "In Review" "status fallback name documented"
 has "$orch" "Never set a status of type \`completed\`" "never Done"

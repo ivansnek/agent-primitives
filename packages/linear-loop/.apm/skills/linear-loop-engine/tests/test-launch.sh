@@ -126,6 +126,47 @@ log="$(cat "$FAKE_HERDR_LOG")"
 assert_contains "$log" "tab create --workspace wL --cwd $r --label orchestrator --no-focus" "new tab in the workspace"
 assert_contains "$log" "--model opus --permission-mode bypassPermissions --remote-control eng-2-loop" "model pinned"
 
+# resume of a failed run restores a status the orchestrator can act on
+rm -f "$FAKE_HERDR_STATE/agents.json"
+failed_run() {               # JQ_FILTER: eng-2-loop as a failed run, shaped by the filter
+  jq ".status=\"failed\" | .failed_reason=\"Linear unreachable\" | .map_only=true | .pause=null | .units=[] | $1" \
+    "$r/keep.json" > "$run/run.json"
+}
+restored() { jq -c '[.status, .failed_reason, .map_only]' "$run/run.json"; }
+while IFS='~' read -r want filter name; do
+  failed_run "$filter"; cp "$run/run.json" "$r/before.json"
+  out="$("$LA" --dry-run --resume eng-2-loop)"
+  assert_contains "$out" "DRY-RUN: restore status failed -> $want and clear failed_reason" "dry-run names the status: $name"
+  assert_eq "$(cmp "$r/before.json" "$run/run.json" && echo same)" same "dry-run restores nothing: $name"
+  "$LA" --resume eng-2-loop >/dev/null
+  assert_eq "$(restored)" "[\"$want\",null,false]" "restored: $name"
+  assert_contains "$(cat "$run/PROGRESS.md")" "Status: $want" "progress shows it: $name"
+done <<'CASES'
+created~.~no units
+created~.units=[{id:"ENG-2",phase:"pending"},{id:"ENG-3",phase:"pending"}]~all units pending
+running~.units=[{id:"ENG-2",phase:"done"},{id:"ENG-3",phase:"pending"}]~a unit done
+running~.units=[{id:"ENG-2",phase:"skipped"}]~a unit skipped
+running~.units=[{id:"ENG-2",phase:"failed"}]~a unit failed
+running~.units=[{id:"ENG-2",phase:"awaiting-human"}]~awaiting human without a pause
+waiting-human~.units=[{id:"ENG-2",phase:"awaiting-human"}] | .pause={seq:1,unit:"ENG-2",kind:"advisor",file:"x",asked_at:"t"}~open pause
+waiting-human~.pause={seq:1,unit:null,kind:"map",file:"x",asked_at:"t"}~open map pause
+CASES
+# a refused resume changes nothing
+refused() {                  # NAME CMD...
+  local name="$1"; shift
+  failed_run .; cp "$run/run.json" "$r/before.json"
+  assert_exit 1 "$@"
+  assert_eq "$(cmp "$r/before.json" "$run/run.json" && echo same)" same "refused resume leaves the ledger: $name"
+}
+refused "flag" "$LA" --resume eng-2-loop --map-only
+printf '{"result":{"agents":[{"name":"eng-2-loop-loop"}]}}\n' > "$FAKE_HERDR_STATE/agents.json"
+refused "live orchestrator" "$LA" --resume eng-2-loop
+rm "$FAKE_HERDR_STATE/agents.json"
+no_tab="$FAKE_HERDR_STATE/no-tab-herdr"
+printf '#!/usr/bin/env bash\n[ "$1 $2" != "tab create" ] || exit 1\nexec "%s" "$@"\n' "$HERDR_BIN" > "$no_tab"; chmod +x "$no_tab"
+refused "workspace gone" env HERDR_BIN="$no_tab" "$LA" --resume eng-2-loop
+cp "$r/keep.json" "$run/run.json"
+
 # a failed start keeps the run for --resume
 : > "$FAKE_HERDR_STATE/agent-start-fails"
 out="$(HERD_START_RETRY_SECONDS=0 msg ENG-4)"

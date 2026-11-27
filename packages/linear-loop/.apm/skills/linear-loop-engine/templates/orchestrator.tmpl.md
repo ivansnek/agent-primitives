@@ -141,7 +141,8 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
 1. **Status.** `ledger get .status`:
    - `created` → step 2, then step 3.
    - `mapped` and `ledger get .map_only` is `true` → print the unit table from
-     `{{RUN_DIR}}/PROGRESS.md` and "Continue with `/linear-loop --resume {{SLUG}}`", stop.
+     `{{RUN_DIR}}/PROGRESS.md` and "Exit this session (`/exit`), then continue with
+     `/linear-loop --resume {{SLUG}}`", stop.
    - `mapped` and `.map_only` is `false` → `ledger set .status '"running"'`, step 2, step 4.
    - `running` → step 2, step 4.
    - `waiting-human` → read `ledger get .pause.file` and ask that question again (Human
@@ -175,7 +176,8 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
       every issue that blocks it (a `blocks` relation seen from the other issue counts too).
    5. `map-apply {{RUN_DIR}}/map.json`:
       - `OK <n>` → `ledger get .status`. `mapped` → print the unit table from PROGRESS.md and
-        "Continue with `/linear-loop --resume {{SLUG}}`", stop. `running` → step 4.
+        "Exit this session (`/exit`), then continue with `/linear-loop --resume {{SLUG}}`",
+        stop. `running` → step 4.
       - `PROBLEM` lines (exit 3) → one pause `map` covering all of them (Map problems below).
       - exit 1 `invalid issue id` → `fail "<the error line>"`, stop. `malformed map` → your
         map.json is wrong: rebuild it from Linear (3, 4) once; again → `fail`.
