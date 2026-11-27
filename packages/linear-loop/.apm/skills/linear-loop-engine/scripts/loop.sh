@@ -6,6 +6,9 @@
 #   pause KIND UNIT|- FILE | unpause | note TEXT | ruling TEXT
 #   linear-has ID KEY | linear-mark ID KEY   (KEY: started | review | comment:<tag>)
 #   add-units ID SLICES_JSON | fail REASON | done
+#   unit-start ID | restart ID | finish-agent ID | bump ID COUNTER | check-bs ID | archive ID
+#   outbox-next ID | inbox-write ID NN FILE | inbox-delivered ID NN | adr-next
+#   prompt-wait NAME TEXT [TIMEOUT_MS] | wait NAME [TIMEOUT_MS] | screen NAME [LINES] | keys NAME KEY...
 # Every ledger write bumps updated_at and re-renders PROGRESS.md. Unit text (titles, rulings,
 # notes) is untrusted: it reaches jq through --arg/--argjson/files only. JQ and JQ_PATH
 # arguments are the caller's own code.
@@ -226,6 +229,271 @@ run_done() {
   herd_notify "linear-loop $SLUG done" "branches are ready, not merged, not pushed" done
 }
 
+# ---- one unit's files ----------------------------------------------------------
+unit_ctx() {                 # ID -> sets I, UNIT (the ledger's id), USLUG, UDIR
+  I="$(uidx "$1")" || exit 1
+  UNIT="$(unit_get "$I" .id)"
+  USLUG="$(loop_uslug "$UNIT")" || exit 1                # the only thing that names the directory
+  UDIR="$RUN_DIR/units/$USLUG"
+}
+nn_ok() { [[ "$1" =~ ^[0-9][0-9]$ ]] || herd_die "loop: message number must be two digits: $1"; }
+
+# ---- outbox / inbox ------------------------------------------------------------
+outbox_next() {              # ID -> FAILED | DONE | ASK NN KIND PATH | PENDING-DELIVERY NN PATH | NONE
+  unit_ctx "$1"
+  if [ -f "$UDIR/bs.failed" ]; then echo FAILED; return; fi
+  if [ -f "$UDIR/bs.done" ]; then echo DONE; return; fi
+  local f nn="" kind
+  for f in "$UDIR"/outbox/[0-9][0-9].md; do              # glob order: the last one is the highest
+    if [ -f "$f" ]; then nn="${f##*/}"; nn="${nn%.md}"; fi
+  done
+  if [ -z "$nn" ]; then echo NONE; return; fi
+  if [ ! -f "$UDIR/inbox/$nn.md" ]; then
+    kind="$(sed -n '1s/^kind:[[:space:]]*//p' "$UDIR/outbox/$nn.md" | sed 's/[[:space:]]*$//')"
+    case "$kind" in question|approaches|playback|breakdown|spec-ready) ;; *) kind=unknown ;; esac
+    printf 'ASK %s %s %s\n' "$nn" "$kind" "$UDIR/outbox/$nn.md"
+  elif [ ! -f "$UDIR/inbox/$nn.delivered" ]; then
+    printf 'PENDING-DELIVERY %s %s\n' "$nn" "$UDIR/inbox/$nn.md"
+  else
+    echo NONE
+  fi
+}
+inbox_write() {              # ID NN FILE -> inbox path
+  local nn="$2" file="$3" tmp
+  nn_ok "$nn"; unit_ctx "$1"
+  [ -f "$UDIR/outbox/$nn.md" ] || herd_die "loop: no message to answer: $UDIR/outbox/$nn.md"
+  [ -f "$file" ] || herd_die "loop: no answer file: $file"
+  mkdir -p "$UDIR/inbox"
+  tmp="$(mktemp "$UDIR/inbox/.$nn.XXXXXX")"
+  if ! { cat -- "$file" > "$tmp" && mv "$tmp" "$UDIR/inbox/$nn.md"; }; then
+    rm -f "$tmp"; herd_die "loop: could not write $UDIR/inbox/$nn.md"
+  fi
+  log "answered $UNIT message $nn"
+  printf '%s\n' "$UDIR/inbox/$nn.md"
+}
+inbox_delivered() {          # ID NN
+  nn_ok "$2"; unit_ctx "$1"
+  [ -f "$UDIR/inbox/$2.md" ] || herd_die "loop: no answer to deliver: $UDIR/inbox/$2.md"
+  : > "$UDIR/inbox/$2.delivered"
+}
+
+# ---- ADRs and artifacts ----------------------------------------------------------
+adr_next() {                 # -> NNNN, one above the stack tip and the drafts in the main checkout
+  local root adr wt d f base max=0
+  root="$(L .root)"; adr="$(loop_adr_dir "$root")" || exit 1
+  wt="$(L '.design_worktree // ""')"
+  for d in ${wt:+"$wt/$adr"} "$root/$adr"; do
+    for f in "$d"/[0-9][0-9][0-9][0-9]-*.md; do
+      [ -f "$f" ] || continue
+      base="${f##*/}"
+      if (( 10#${base:0:4} > max )); then max=$(( 10#${base:0:4} )); fi    # 10#: 0008 is not octal
+    done
+  done
+  printf '%04d\n' "$(( max + 1 ))"
+}
+# For a path an agent named. True only for a regular file really inside ROOT/DIR: relative, no
+# "..", not a symlink, and no directory on the way that leads elsewhere.
+file_under() {               # ROOT DIR REL
+  local root="$1" dir="${2#./}" rel="$3" base real
+  case "$rel" in /*|..|../*|*/..|*/../*|*[[:cntrl:]]*) return 1 ;; esac
+  case "$rel" in "$dir"/?*) ;; *) return 1 ;; esac
+  [ -f "$root/$rel" ] && [ ! -L "$root/$rel" ] || return 1
+  base="$(cd "$root/$dir" 2>/dev/null && pwd -P)" || return 1
+  real="$(cd "$(dirname "$root/$rel")" 2>/dev/null && pwd -P)" || return 1
+  case "$real/" in "$base"/*) return 0 ;; esac
+  return 1
+}
+archive() {                  # ID: copy spec, plan and ADRs to units/<uslug>/artifacts/
+  local root adr dir rel item items=()
+  unit_ctx "$1"
+  root="$(L .root)"; adr="$(loop_adr_dir "$root")" || exit 1
+  # "<allowed dir><TAB><path>". The ledger's paths came from an agent, so each is checked again.
+  while IFS= read -r item; do items+=("$item"); done < <(jq -r --argjson i "$I" --arg adr "$adr" '
+    .units[$i] | ["docs/superpowers/specs", .spec], ["docs/superpowers/plans", .plan], ((.adrs // [])[] | [$adr, .])
+    | select(.[1] != null) | @tsv' "$RUN_JSON")
+  # all checked before the first copy (@tsv escapes tabs and newlines, so such a path fails too)
+  for item in ${items[@]+"${items[@]}"}; do
+    dir="${item%%$'\t'*}"; rel="${item#*$'\t'}"
+    file_under "$root" "$dir" "$rel" || herd_die "loop: cannot archive $rel: not a file under $root/$dir"
+  done
+  for item in ${items[@]+"${items[@]}"}; do
+    rel="${item#*$'\t'}"
+    mkdir -p "$(dirname "$UDIR/artifacts/$rel")"
+    rm -f "$UDIR/artifacts/$rel"
+    cp -- "$root/$rel" "$UDIR/artifacts/$rel" || herd_die "loop: could not archive $rel"
+  done
+}
+
+# ---- the brainstormer's sentinel ---------------------------------------------------
+sentinel_value() {           # FILE KEY -> the first "KEY: value" line's value, trimmed
+  sed -n "/^$2:/{s/^$2:[[:space:]]*//;s/[[:space:]]*\$//;p;q;}" "$1"
+}
+not_done() { printf 'NONE %s\n' "$(printf '%s' "$1" | tr -d '[:cntrl:]')"; exit 3; }
+# A refusal never changes the ledger: the orchestrator decides what a bad sentinel means.
+check_bs() {                 # ID -> DONE (0) | FAILED + text (2) | NONE why (3)
+  local root adr want line spec plan adrs a list=() found=() adrs_json
+  unit_ctx "$1"
+  root="$(L .root)"; adr="$(loop_adr_dir "$root")" || exit 1
+  adr="${adr#./}"
+  if [ -f "$UDIR/bs.failed" ]; then echo FAILED; cat "$UDIR/bs.failed"; exit 2; fi
+  if [ ! -f "$UDIR/bs.done" ]; then
+    echo NONE
+    "$HERDR_BIN" agent read "$(unit_get "$I" .agent)" --source visible 2>/dev/null || true
+    exit 3
+  fi
+  want="$(herd_model_family "$(L .models.brainstorm)")"
+  line="$(head -1 "$UDIR/bs.done" | tr '[:upper:]' '[:lower:]')"
+  case "$line" in model:*"$want"*) ;; *) echo "FAILED model-mismatch"; exit 2 ;; esac
+  spec="$(sentinel_value "$UDIR/bs.done" spec)"
+  plan="$(sentinel_value "$UDIR/bs.done" plan)"
+  adrs="$(sentinel_value "$UDIR/bs.done" adrs)"
+  [ -n "$spec" ] && [ -n "$plan" ] && [ -n "$adrs" ] || not_done bad-sentinel
+  file_under "$root" docs/superpowers/specs "$spec" || not_done spec-missing
+  if [ "$(unit_get "$I" .kind)" = epic-design ]; then
+    [ "$plan" = none ] || not_done unexpected-plan
+    plan=""
+  else
+    file_under "$root" docs/superpowers/plans "$plan" || not_done plan-missing
+    grep -qF -- "$spec" "$root/$plan" || not_done plan-does-not-cite-spec
+  fi
+  if [ "$adrs" != none ]; then
+    IFS=, read -ra list <<<"$adrs"                       # read, not word splitting: no globbing
+    for a in ${list[@]+"${list[@]}"}; do
+      a="${a#"${a%%[![:space:]]*}"}"; a="${a%"${a##*[![:space:]]}"}"
+      [ -n "$a" ] || continue
+      file_under "$root" "$adr" "$a" || not_done "adr-missing: $a"
+      found+=("$a")
+    done
+  fi
+  adrs_json="$(jq -nc '$ARGS.positional' --args ${found[@]+"${found[@]}"})"
+  write "brainstorm gate passed: $UNIT" \
+    '.units[$i] |= (.spec = $spec | .plan = (if $plan == "" then null else $plan end) | .adrs = $adrs)' \
+    --argjson i "$I" --arg spec "$spec" --arg plan "$plan" --argjson adrs "$adrs_json"
+  archive "$UNIT"
+  echo DONE
+}
+
+# ---- the brainstormer session --------------------------------------------------------
+# unit-start force-checks-out and cleans this directory, so it must be provably the disposable
+# one: a linked worktree of this repo, never the main checkout or the run's root.
+design_worktree() {          # -> canonical path, or dies
+  local wt real root list
+  wt="$(L '.design_worktree // ""')"
+  [ -n "$wt" ] || herd_die "loop: design worktree is not set in the ledger"
+  real="$(cd "$wt" 2>/dev/null && pwd -P)" || herd_die "loop: design worktree is missing: $wt"
+  root="$(cd "$(L .root)" 2>/dev/null && pwd -P)" || herd_die "loop: design worktree check failed, no repo root: $(L .root)"
+  [ "$real" != "$root" ] || herd_die "loop: design worktree is the repo root: $wt"
+  [ "$(git -C "$real" rev-parse --show-toplevel 2>/dev/null)" = "$real" ] \
+    || herd_die "loop: design worktree is not the top of a git worktree: $wt"
+  list="$(git -C "$root" worktree list --porcelain | sed -n 's/^worktree //p' | sed 1d)"   # 1st = main checkout
+  grep -qxF -- "$real" <<<"$list" || herd_die "loop: design worktree is not a linked worktree of $root: $wt"
+  printf '%s\n' "$real"
+}
+render_brief() {             # (after unit_ctx) -> brief path
+  local root wt adr next kind kind_rules prior="" rulings=none other s out="$UDIR/brief.md"
+  root="$(L .root)"; wt="$(L .design_worktree)"
+  adr="$(loop_adr_dir "$root")" || exit 1
+  next="$(adr_next)" || exit 1
+  kind="$(unit_get "$I" .kind)"
+  case "$kind" in
+    issue) kind_rules="This unit is an \`issue\`: a spec, then a plan. It gets a plan, however small the ticket, because execution needs a plan file. Once the inbox approves the spec, invoke \`superpowers:writing-plans\` and write the plan. The plan is not sent for approval. The plan must contain the spec's repo-relative path. If the inbox approves a breakdown instead, this unit becomes an epic design: write only a short design doc (shared decisions, boundaries between children, what each child owns, ADR drafts), send it as \`spec-ready\`, and after approval write no plan and put \`plan: none\` in the sentinel." ;;
+    epic-design) kind_rules="This unit is an \`epic-design\`: it stops at the approved design doc. Write a short design doc only: shared decisions, boundaries between children, what each child owns, ADR drafts. Do not invoke \`superpowers:writing-plans\`, write no plan and execute nothing. After the inbox approves the doc, write the sentinel with \`plan: none\`." ;;
+    *) herd_die "loop: unknown unit kind: $kind" ;;
+  esac
+  while IFS= read -r other; do
+    s="$(loop_uslug "$other")" || exit 1
+    [ ! -d "$RUN_DIR/units/$s/artifacts" ] || prior="$prior${prior:+$'\n'}$RUN_DIR/units/$s/artifacts"
+  done < <(jq -r --argjson i "$I" '.units[$i].order as $o | .units | sort_by(.order)[] | select(.order < $o) | .id' "$RUN_JSON")
+  [ ! -f "$RUN_DIR/rulings.md" ] || rulings="$RUN_DIR/rulings.md"
+  mkdir -p "$UDIR/outbox" "$UDIR/inbox"
+  # Paths, never file contents: no ticket text goes into the brief, and render.sh would refuse
+  # a {{KEY}} found inside any value.
+  "$HERD_SCRIPTS_DIR/render.sh" "$LOOP_TEMPLATES_DIR/brainstorm-brief.tmpl.md" \
+    SLUG="$SLUG" UNIT_ID="$UNIT" KIND="$kind" MODEL="$(L .models.brainstorm)" ROOT="$root" \
+    DESIGN_WORKTREE="$wt" ISSUE_FILE="$UDIR/issue.md" OUTBOX="$UDIR/outbox" INBOX="$UDIR/inbox" \
+    SPEC_DIR="$root/docs/superpowers/specs" PLAN_DIR="$root/docs/superpowers/plans" \
+    ADR_DIR_MAIN="$root/$adr" ADR_DIR_TIP="$wt/$adr" ADR_NEXT="$next" \
+    ADR_TEMPLATE="$LOOP_TEMPLATES_DIR/adr.default.md" PRIOR_ARTIFACTS="${prior:-none}" RULINGS="$rulings" \
+    SENTINEL_DONE="$UDIR/bs.done" SENTINEL_FAILED="$UDIR/bs.failed" KIND_RULES="$kind_rules" > "$out" \
+    || herd_die "loop: could not render the brief: $out"
+  printf '%s\n' "$out"
+}
+start_agent() {              # NAME PANE [extra claude args...]
+  local name="$1" pane="$2"; shift 2
+  herd_worker_flags "$(L .models.brainstorm)" "$(L .root)"
+  # appended to herd's flags, which end in --disallowedTools: the brainstormer writes no git state
+  HERD_FLAGS+=("Bash(git commit:*)" "Bash(git add:*)" "Bash(git checkout:*)" "Bash(git switch:*)"
+    "Bash(git stash:*)" "Bash(git reset:*)")
+  herd_agent_start "$name" "$pane" -- "$@" "${HERD_FLAGS[@]}" >/dev/null
+}
+record_session() {           # NAME (after unit_ctx)
+  local sid; sid="$(herd_agent_session_id "$1")"
+  [ -z "$sid" ] || write "" '.units[$i].session_id = $s' --argjson i "$I" --arg s "$sid"
+}
+unit_start() {               # ID -> brief path
+  local name wt tip sha ws brief tab_json pane tab
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR  # they would redirect "git -C" below
+  unit_ctx "$1"
+  [ -f "$UDIR/issue.md" ] || herd_die "loop: write the issue snapshot first: $UDIR/issue.md"
+  name="$(unit_get "$I" .agent)"
+  ! herd_agent_live "$name" || herd_die "loop: $name is already live (finish-agent $UNIT first, or wait for it)"
+  wt="$(design_worktree)" || exit 1
+  tip="$(L '.stack_tip // ""')"
+  sha="$(git -C "$wt" rev-parse --verify -q --end-of-options "$tip^{commit}")" \
+    || herd_die "loop: stack tip is not a commit: $tip"
+  ws="$(L .workspace_id)"
+  { git -C "$wt" checkout -q -f --detach "$sha" && git -C "$wt" clean -q -f -d; } >&2 \
+    || herd_die "loop: design worktree could not be reset to $tip: $wt"
+  rm -f "$UDIR/bs.done" "$UDIR/bs.failed"                # stale sentinels from an earlier attempt
+  brief="$(render_brief)" || exit 1
+  tab_json="$("$HERDR_BIN" tab create --workspace "$ws" --cwd "$wt" --label "bs-$USLUG" --no-focus)"
+  pane="$(herd_json_field "$tab_json" '.result.root_pane.pane_id')"; tab="$(herd_json_field "$tab_json" '.result.tab.tab_id')"
+  [ -n "$pane" ] && [ -n "$tab" ] || herd_die "loop: unexpected tab create response: $tab_json"
+  if ! start_agent "$name" "$pane"; then
+    "$HERDR_BIN" tab close "$tab" >/dev/null 2>&1 || true          # don't strand the tab we just created
+    herd_die "loop: could not start $name in $pane"
+  fi
+  write "started $name in $pane" \
+    '.units[$i] |= (.pane = $pane | .tab = $tab | .session_id = null | .base = $base | .phase = "brainstorming")' \
+    --argjson i "$I" --arg pane "$pane" --arg tab "$tab" --arg base "$tip"
+  record_session "$name"
+  printf '%s\n' "$brief"
+}
+restart_unit() {             # ID -> brief path | RESTART-LIMIT (6)
+  local name pane sid restarts brief
+  unit_ctx "$1"
+  name="$(unit_get "$I" .agent)"; pane="$(unit_get "$I" '.pane // ""')"; sid="$(unit_get "$I" '.session_id // ""')"
+  restarts="$(unit_get "$I" '.restarts // 0')"
+  [ "$restarts" -lt 2 ] || { echo "RESTART-LIMIT"; exit 6; }
+  [ -n "$pane" ] || herd_die "loop: $UNIT has no pane (unit-start it first)"
+  if herd_agent_live "$name"; then herd_agent_exit "$name" || herd_die "loop: could not exit $name"; fi
+  rm -f "$UDIR/bs.done" "$UDIR/bs.failed"      # a stale sentinel would speak for the previous attempt
+  brief="$(render_brief)" || exit 1            # the design worktree is left as it is
+  if [ -n "$sid" ] && start_agent "$name" "$pane" --resume "$sid"; then :
+  else
+    start_agent "$name" "$pane" || herd_die "loop: could not restart $name"
+    write "" '.units[$i].session_id = null' --argjson i "$I"
+  fi
+  write "restarted $name (restart $(( restarts + 1 )))" '.units[$i].restarts = $n' \
+    --argjson i "$I" --argjson n "$(( restarts + 1 ))"
+  record_session "$name"
+  printf '%s\n' "$brief"
+}
+finish_agent() {             # ID
+  local name tab
+  unit_ctx "$1"
+  name="$(unit_get "$I" .agent)"; tab="$(unit_get "$I" '.tab // ""')"
+  herd_agent_exit "$name" || herd_log "loop: $name did not exit cleanly; closing its tab anyway"
+  if [ -n "$tab" ]; then "$HERDR_BIN" tab close "$tab" >/dev/null 2>&1 || true; fi
+  log "finished $name (tab ${tab:-unknown})"
+}
+bump() {                     # ID COUNTER -> new count
+  [[ "$2" =~ ^[a-z_]+$ ]] || herd_die "loop: counter must be [a-z_]+: $2"
+  unit_ctx "$1"
+  write "" '.units[$i].recovery[$c] = ((.units[$i].recovery[$c] // 0) + 1)' --argjson i "$I" --arg c "$2"
+  jq -r --argjson i "$I" --arg c "$2" '.units[$i].recovery[$c]' "$RUN_JSON"
+}
+
 case "$CMD" in
   ledger)
     case "${1:-}" in
@@ -248,5 +516,19 @@ case "$CMD" in
   linear-mark) need $# 2 "linear-mark ID KEY"; linear_mark "$1" "$2" ;;
   fail) need $# 1 "fail REASON"; run_fail "$*" ;;
   done) run_done ;;
+  unit-start) need $# 1 "unit-start ID"; unit_start "$1" ;;
+  restart) need $# 1 "restart ID"; restart_unit "$1" ;;
+  finish-agent) need $# 1 "finish-agent ID"; finish_agent "$1" ;;
+  bump) need $# 2 "bump ID COUNTER"; bump "$1" "$2" ;;
+  check-bs) need $# 1 "check-bs ID"; check_bs "$1" ;;
+  archive) need $# 1 "archive ID"; archive "$1" ;;
+  outbox-next) need $# 1 "outbox-next ID"; outbox_next "$1" ;;
+  inbox-write) need $# 3 "inbox-write ID NN FILE"; inbox_write "$1" "$2" "$3" ;;
+  inbox-delivered) need $# 2 "inbox-delivered ID NN"; inbox_delivered "$1" "$2" ;;
+  adr-next) adr_next ;;
+  prompt-wait) need $# 2 "prompt-wait NAME TEXT [TIMEOUT_MS]"; herd_agent_prompt_wait "$@" ;;
+  wait) need $# 1 "wait NAME [TIMEOUT_MS]"; herd_agent_wait "$@" ;;
+  screen) need $# 1 "screen NAME [LINES]"; herd_agent_screen "$@" ;;
+  keys) need $# 2 "keys NAME KEY..."; herd_agent_keys "$@" ;;
   *) herd_die "loop: unknown command: $CMD" ;;
 esac
