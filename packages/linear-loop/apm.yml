@@ -1,0 +1,5 @@
+name: linear-loop
+version: "0.1.0"
+license: MIT
+description: Linear issues and epics to reviewed feature branches — dependency map, advisor-answered brainstorm, spec, plan, herd execution, human pause over Remote Control.
+target: claude

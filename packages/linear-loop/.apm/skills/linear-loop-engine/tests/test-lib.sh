@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/assert.sh"
+source "$LOOP/scripts/lib.sh"
+assert_eq "$(loop_engine_version)" "linear-loop@0.1.0" "engine version"
+assert_file "$HERD_ENGINE_DIR/scripts/lib.sh" "herd engine resolved"
+assert_exit 0 loop_require_herd
+assert_exit 1 env HERD_ENGINE_DIR=/nonexistent bash -c "source '$LOOP/scripts/lib.sh'"
+r="$(make_repo)"
+assert_eq "$(loop_runs_dir "$r")" "$r/.claude/loop-runs" "default runs dir"
+assert_eq "$(loop_adr_dir "$r")" "docs/adr" "default adr dir"
+printf '{"version":1,"adrDir":"docs/decisions/","runsDir":".x/runs"}\n' > "$r/.claude/linear-loop.config.json"
+assert_eq "$(loop_adr_dir "$r")" "docs/decisions" "configured adr dir, slash trimmed"
+assert_eq "$(loop_runs_dir "$r")" "$r/.x/runs" "configured runs dir"
+assert_exit 0 loop_config_check "$r"
+printf '{"version":2}\n' > "$r/.claude/linear-loop.config.json";            assert_exit 1 loop_config_check "$r"
+printf '{"version":1,"linearWrites":"all"}\n' > "$r/.claude/linear-loop.config.json"; assert_exit 1 loop_config_check "$r"
+printf '{"version":1,"adrDir":"../x"}\n' > "$r/.claude/linear-loop.config.json";      assert_exit 1 loop_adr_dir "$r"
+assert_eq "$(loop_uslug ENG-12)" "eng-12" "uslug"
+assert_exit 1 loop_uslug "ENG 12"
+assert_exit 1 loop_uslug "../x-1"
+assert_eq "$(loop_nn 3)" "03" "nn"
+finish
