@@ -71,6 +71,25 @@ has "$orch" "\`planning\` and \`check-bs ID\` prints \`DONE\` → d's \`DONE\` b
 has "$orch" "\`executing\` → e from its start" "an execution error is retried as execution"
 has "$orch" "\`GONE\`, \`STALLED\` or \`WAIT-ERROR\` → \`outbox-next ID\` first" "a gone agent's sentinel is checked before any restart"
 
+# review fix round 2: the units below an epic are found through parents that have no unit
+has "$orch" "follow \`.parent\` upward, transitively" "the epic row says how to find the units below it"
+d="$(mktemp -d)"
+jq -n '{given: ["ENG-1"], issues: [
+  {id: "ENG-1", uuid: "u1", title: "Epic", statusType: "started", parent: null, createdAt: "2026-01-01T00:00:00Z", blockedBy: []},
+  {id: "ENG-2", uuid: "u2", title: "Leaf", statusType: "unstarted", parent: "ENG-1", createdAt: "2026-01-02T00:00:00Z", blockedBy: []},
+  {id: "ENG-3", uuid: "u3", title: "Mid", statusType: "unstarted", parent: "ENG-1", createdAt: "2026-01-03T00:00:00Z", blockedBy: []},
+  {id: "ENG-4", uuid: "u4", title: "Only child", statusType: "unstarted", parent: "ENG-3", createdAt: "2026-01-04T00:00:00Z", blockedBy: []}]}' > "$d/map.json"
+"$LOOP/scripts/order.sh" "$d/map.json" \
+  | jq '{units: [.units[] | {id, kind, parent, phase: (if .id == "ENG-2" then "done" else "pending" end)}]}' > "$d/run.json"
+assert_eq "$(jq -r '.units[] | select(.id == "ENG-4") | .parent' "$d/run.json")" "ENG-3" "fixture: ENG-4's parent has no unit"
+below="$("$HERD/scripts/render.sh" "$T/orchestrator.tmpl.md" "${args[@]/#RUN_DIR=*/RUN_DIR=$d}" \
+  | sed -n '/^ *jq -n --slurpfile run /,/{id, phase}\]'"'"'$/p')"
+assert_eq "${below:+found}" found "the template gives the command for the units below an epic"
+got="$(cd "$d" && eval "${below/--arg e E /--arg e ENG-1 }" | jq -c . 2>&1)" || got="error: $got"
+assert_eq "$got" '[{"id":"ENG-2","phase":"done"},{"id":"ENG-4","phase":"pending"}]' \
+  "units below an epic include one under a parent with no unit"
+rm -rf "$d"
+
 # ---- advisor prompts -------------------------------------------------------------
 answer="$(cat "$T/advisor-answer.tmpl.md")"; review="$(cat "$T/advisor-review.tmpl.md")"
 for f in ISSUE_FILE EPIC_DESIGN ADR_DIRS RULINGS_FILE PRIOR_ARTIFACTS HISTORY_DIRS MESSAGE_FILE DESIGN_WORKTREE; do

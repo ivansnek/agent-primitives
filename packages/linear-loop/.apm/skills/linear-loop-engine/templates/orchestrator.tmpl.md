@@ -115,8 +115,18 @@ writes for a `skipped` unit.
 | `comment:parent-started` | as `started`, and `.parent` names an issue with no unit (collapsed into ID, or outside the run) | that parent's started status | `status` |
 | `comment:done` | an `issue` unit whose `.phase` is `done` | the done comment (step e) on the issue | `comments` or `status` |
 | `review` | as `comment:done` | the issue's review status | `status` |
-| `comment:done`, `review` on an `epic-design` unit | its `.phase` is `done`, every unit below it is `done` or `skipped`, and at least one is `done` | the epic comment (the children's branches) and the epic's review status | as above |
+| `comment:done`, `review` on an `epic-design` unit | its `.phase` is `done`, every unit below it is `done` or `skipped`, and at least one is `done`. Below = follow `.parent` upward, transitively, through `{{RUN_DIR}}/map.json` for parents with no unit (the command below), never only the units whose `.parent` is the epic | the epic comment (the children's branches) and the epic's review status | as above |
 | `comment:parent-done`, `comment:parent-review` | an `issue` unit `done` whose `.parent` has no unit and is in `{{RUN_DIR}}/map.json` (collapsed into ID; never a parent outside the run) | that parent's comment and review status | as above |
+
+The units below epic E, with their phases (a unit can sit under a parent that collapsed into
+it and has no unit, so a direct `.parent` match misses it):
+
+    jq -n --slurpfile run {{RUN_DIR}}/run.json --slurpfile map {{RUN_DIR}}/map.json --arg e E '
+      ($map[0].issues | map({key: (.id | ascii_upcase), value: ((.parent // "") | ascii_upcase)}) | from_entries)
+      + ($run[0].units | map({key: (.id | ascii_upcase), value: ((.parent // "") | ascii_upcase)}) | from_entries) as $P
+      | ($e | ascii_upcase) as $E
+      | [$run[0].units[] | select([limit(50; .id | ascii_upcase | recurse($P[.] // "" | select(. != "")))][1:] | any(. == $E))
+         | {id, phase}]'
 
 The done comment names the branch `feat/<uslug>`, the spec, the plan, the ADRs, the number of
 deferred critical/high audit findings (the sum of `deferred_critical_high` in
