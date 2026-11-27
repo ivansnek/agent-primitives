@@ -1,0 +1,5 @@
+{"given": ["ENG-50"],
+ "issues": [
+  {"id": "ENG-50", "uuid": "u50", "title": "Deploy the new worker", "statusType": "unstarted", "parent": null, "createdAt": "2026-06-01T00:00:00Z", "blockedBy": ["ops-9"]},
+  {"id": "OPS-9", "uuid": "o9", "title": "Provision the queue", "statusType": "started", "parent": null, "createdAt": "2026-05-20T00:00:00Z", "blockedBy": []}
+ ]}

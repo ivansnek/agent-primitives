@@ -1,0 +1,6 @@
+{"given": ["ENG-40"],
+ "issues": [
+  {"id": "ENG-42", "uuid": "u42", "title": "Search page", "statusType": "unstarted", "parent": "ENG-40", "createdAt": "2026-04-02T00:00:00Z", "blockedBy": ["ENG-41"]},
+  {"id": "ENG-41", "uuid": "u41", "title": "Search index", "statusType": "completed", "parent": "ENG-40", "createdAt": "2026-04-01T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-40", "uuid": "u40", "title": "Search", "statusType": "started", "parent": null, "createdAt": "2026-04-01T00:00:00Z", "blockedBy": []}
+ ]}

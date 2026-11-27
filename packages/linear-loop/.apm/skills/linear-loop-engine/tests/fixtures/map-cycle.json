@@ -1,0 +1,42 @@
+{
+  "given": [
+    "ENG-92",
+    "ENG-91",
+    "ENG-90"
+  ],
+  "issues": [
+    {
+      "id": "ENG-90",
+      "uuid": "u90",
+      "title": "A",
+      "statusType": "unstarted",
+      "parent": null,
+      "createdAt": "2026-07-01T00:00:00Z",
+      "blockedBy": [
+        "ENG-91"
+      ]
+    },
+    {
+      "id": "ENG-91",
+      "uuid": "u91",
+      "title": "B",
+      "statusType": "unstarted",
+      "parent": null,
+      "createdAt": "2026-07-02T00:00:00Z",
+      "blockedBy": [
+        "ENG-90"
+      ]
+    },
+    {
+      "id": "ENG-92",
+      "uuid": "u92",
+      "title": "C, after A",
+      "statusType": "unstarted",
+      "parent": null,
+      "createdAt": "2026-07-03T00:00:00Z",
+      "blockedBy": [
+        "ENG-90"
+      ]
+    }
+  ]
+}

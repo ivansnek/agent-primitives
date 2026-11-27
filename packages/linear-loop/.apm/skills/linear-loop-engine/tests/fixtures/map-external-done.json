@@ -1,0 +1,6 @@
+{"given": ["ENG-55"],
+ "issues": [
+  {"id": "ENG-55", "uuid": "u55", "title": "Use the queue", "statusType": "unstarted", "parent": null, "createdAt": "2026-06-01T00:00:00Z", "blockedBy": ["OPS-10", "OPS-11"]},
+  {"id": "OPS-10", "uuid": "o10", "title": "Provision the queue", "statusType": "completed", "parent": null, "createdAt": "2026-05-20T00:00:00Z", "blockedBy": []},
+  {"id": "OPS-11", "uuid": "o11", "title": "Old approach", "statusType": "canceled", "parent": null, "createdAt": "2026-05-21T00:00:00Z", "blockedBy": []}
+ ]}

@@ -1,0 +1,6 @@
+{"given": ["ENG-20"],
+ "issues": [
+  {"id": "ENG-22", "uuid": "u22", "title": "Spike", "statusType": "completed", "parent": "ENG-20", "createdAt": "2026-03-01T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-20", "uuid": "u20", "title": "Login epic", "statusType": "started", "parent": null, "createdAt": "2026-03-01T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-21", "uuid": "u21", "title": "Login form", "statusType": "unstarted", "parent": "ENG-20", "createdAt": "2026-03-02T00:00:00Z", "blockedBy": []}
+ ]}

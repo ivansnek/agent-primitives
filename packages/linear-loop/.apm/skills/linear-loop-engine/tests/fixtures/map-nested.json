@@ -1,0 +1,9 @@
+{"given": ["ENG-200", "ENG-210"],
+ "issues": [
+  {"id": "ENG-202", "uuid": "u202", "title": "Admin screen", "statusType": "unstarted", "parent": "ENG-200", "createdAt": "2026-11-01T12:00:00Z", "blockedBy": ["eng-204", "ENG-204"]},
+  {"id": "ENG-204", "uuid": "u204", "title": "Roles table", "statusType": "unstarted", "parent": "ENG-201", "createdAt": "2026-11-03T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-210", "uuid": "u210", "title": "Audit log", "statusType": "unstarted", "parent": null, "createdAt": "2026-11-05T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-203", "uuid": "u203", "title": "Role checks", "statusType": "unstarted", "parent": "ENG-201", "createdAt": "2026-11-04T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-201", "uuid": "u201", "title": "Roles", "statusType": "unstarted", "parent": "ENG-200", "createdAt": "2026-11-02T00:00:00Z", "blockedBy": ["ENG-210"]},
+  {"id": "ENG-200", "uuid": "u200", "title": "Admin", "statusType": "started", "parent": null, "createdAt": "2026-11-01T00:00:00Z", "blockedBy": []}
+ ]}

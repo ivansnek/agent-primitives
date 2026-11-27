@@ -1,0 +1,13 @@
+{"given": ["ENG-110", "ENG-120"],
+ "issues": [
+  {"id": "ENG-110", "uuid": "u110", "title": "Closed epic with open sub-issues", "statusType": "completed", "parent": null, "createdAt": "2026-10-01T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-112", "uuid": "u112", "title": "Leftover B", "statusType": "backlog", "parent": "ENG-110", "createdAt": "2026-10-01T02:00:00Z", "blockedBy": []},
+  {"id": "ENG-111", "uuid": "u111", "title": "Leftover A", "statusType": "started", "parent": "ENG-110", "createdAt": "2026-10-01T01:00:00Z", "blockedBy": []},
+  {"id": "ENG-120", "uuid": "u120", "title": "Open epic", "statusType": "started", "parent": null, "createdAt": "2026-10-01T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-121", "uuid": "u121", "title": "Closed middle issue", "statusType": "completed", "parent": "ENG-120", "createdAt": "2026-10-02T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-122", "uuid": "u122", "title": "Open under the closed middle", "statusType": "unstarted", "parent": "ENG-121", "createdAt": "2026-10-05T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-123", "uuid": "u123", "title": "Open under the closed middle too", "statusType": "unstarted", "parent": "ENG-121", "createdAt": "2026-10-06T00:00:00Z", "blockedBy": ["ENG-125"]},
+  {"id": "ENG-124", "uuid": "u124", "title": "Direct child", "statusType": "unstarted", "parent": "ENG-120", "createdAt": "2026-10-03T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-125", "uuid": "u125", "title": "Open, but its sub-issue is done", "statusType": "started", "parent": "ENG-120", "createdAt": "2026-10-04T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-126", "uuid": "u126", "title": "Done", "statusType": "completed", "parent": "ENG-125", "createdAt": "2026-10-07T00:00:00Z", "blockedBy": []}
+ ]}

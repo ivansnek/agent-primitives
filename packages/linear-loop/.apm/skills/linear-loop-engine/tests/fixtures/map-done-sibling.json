@@ -1,0 +1,7 @@
+{"given": ["ENG-160"],
+ "issues": [
+  {"id": "ENG-160", "uuid": "u160", "title": "Epic", "statusType": "started", "parent": null, "createdAt": "2026-10-15T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-162", "uuid": "u162", "title": "Open, but its sub-issue is done", "statusType": "started", "parent": "ENG-160", "createdAt": "2026-10-16T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-163", "uuid": "u163", "title": "Done", "statusType": "completed", "parent": "ENG-162", "createdAt": "2026-10-17T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-161", "uuid": "u161", "title": "The real work", "statusType": "unstarted", "parent": "ENG-160", "createdAt": "2026-10-18T00:00:00Z", "blockedBy": []}
+ ]}
