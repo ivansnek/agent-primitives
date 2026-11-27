@@ -38,7 +38,7 @@ else .[0] |
   else
     (reduce .issues[] as $i ({}; ($i.id | up) as $k | if has($k) then . else .[$k] = ($i.parent | up) end)) as $P
     | ($P | length) as $n
-    | if any($P | keys[]; [limit($n + 1; recurse($P[.] // empty))] | length > $n)
+    | if any($P | keys[]; [limit($n + 1; recurse($P[.] // empty) | select(. as $x | $P | has($x)))] | length > $n)
       then "parent links form a loop" else empty end
   end
 end'
@@ -122,10 +122,11 @@ def closure: . as $d | reduce range(0; length) as $_ ($d; . as $c | map(. as $ro
 | [$given[] | select(known(.) | not) | {type: "unknown-id", ids: [.], detail: "\(.) is not in the map"}] as $unknown
 | [$pre[] | select(live(.)) as $m | $I[$m].blockedBy | sort_by(idkey)[]
    | select((inrun(.) | not) and (inactive(.) | not))
-   | {type: "external", ids: [$m, .],
-      detail: ("\($m) is blocked by \(.), which is outside the run and "
-               + (if known(.) then "not done" else "not in the map" end)
-               + (if rep($m) != $m then " (unit \(rep($m)))" else "" end))}] as $ext
+   # ids name the unit; a collapsed parent that carries the relation is named in detail
+   | {type: "external", ids: [rep($m), .],
+      detail: ((if rep($m) != $m then "\($m) (collapsed into unit \(rep($m)))" else $m end)
+               + " is blocked by \(.), which is outside the run and "
+               + (if known(.) then "not done" else "not in the map" end))}] as $ext
 | {units: ($u0 | map(.blocked_by |= sort_by($ord[.]))),
    skipped: $skipped,
    problems: (($unknown + $ext + $res.problems)
