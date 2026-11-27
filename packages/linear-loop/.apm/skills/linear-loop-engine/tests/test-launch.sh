@@ -176,7 +176,7 @@ rm "$FAKE_HERDR_STATE/agent-start-fails"
 
 # a base that is not a ref name would mean another commit in the design worktree: pinned
 use_fake_herdr; r="$(make_repo)"; cd "$r"
-git -C "$r" commit -q --allow-empty -m second
+git -C "$r" -c user.email=t@t -c user.name=t commit -q --allow-empty -m second
 head="$(git -C "$r" rev-parse HEAD)"; prev="$(git -C "$r" rev-parse HEAD~1)"
 based() {                    # SLUG BASE_ARG WANT_STORED WANT_COMMIT NAME
   "$LA" --slug "$1" --base "$2" ENG-5 >/dev/null 2>&1
