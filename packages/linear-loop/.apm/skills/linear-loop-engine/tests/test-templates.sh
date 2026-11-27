@@ -85,9 +85,14 @@ assert_eq "$(jq -r '.units[] | select(.id == "ENG-4") | .parent' "$d/run.json")"
 below="$("$HERD/scripts/render.sh" "$T/orchestrator.tmpl.md" "${args[@]/#RUN_DIR=*/RUN_DIR=$d}" \
   | sed -n '/^ *jq -n --slurpfile run /,/{id, phase}\]'"'"'$/p')"
 assert_eq "${below:+found}" found "the template gives the command for the units below an epic"
-got="$(cd "$d" && eval "${below/--arg e E /--arg e ENG-1 }" | jq -c . 2>&1)" || got="error: $got"
-assert_eq "$got" '[{"id":"ENG-2","phase":"done"},{"id":"ENG-4","phase":"pending"}]' \
-  "units below an epic include one under a parent with no unit"
+# run it with the jq on PATH and, where it exists, the stock macOS one (1.7.1 binds `as` tighter)
+jqs=(jq); [ ! -x /usr/bin/jq ] || jqs+=(/usr/bin/jq)
+cmd="${below/--arg e E /--arg e ENG-1 }"
+for J in "${jqs[@]}"; do
+  got="$(cd "$d" && eval "${cmd/jq -n /$J -n }" | jq -c . 2>&1)" || got="error: $got"
+  assert_eq "$got" '[{"id":"ENG-2","phase":"done"},{"id":"ENG-4","phase":"pending"}]' \
+    "units below an epic include one under a parent with no unit ($("$J" --version))"
+done
 rm -rf "$d"
 
 # ---- advisor prompts -------------------------------------------------------------

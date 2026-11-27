@@ -122,8 +122,8 @@ The units below epic E, with their phases (a unit can sit under a parent that co
 it and has no unit, so a direct `.parent` match misses it):
 
     jq -n --slurpfile run {{RUN_DIR}}/run.json --slurpfile map {{RUN_DIR}}/map.json --arg e E '
-      ($map[0].issues | map({key: (.id | ascii_upcase), value: ((.parent // "") | ascii_upcase)}) | from_entries)
-      + ($run[0].units | map({key: (.id | ascii_upcase), value: ((.parent // "") | ascii_upcase)}) | from_entries) as $P
+      (($map[0].issues | map({key: (.id | ascii_upcase), value: ((.parent // "") | ascii_upcase)}) | from_entries)
+       + ($run[0].units | map({key: (.id | ascii_upcase), value: ((.parent // "") | ascii_upcase)}) | from_entries)) as $P
       | ($e | ascii_upcase) as $E
       | [$run[0].units[] | select([limit(50; .id | ascii_upcase | recurse($P[.] // "" | select(. != "")))][1:] | any(. == $E))
          | {id, phase}]'
