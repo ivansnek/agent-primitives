@@ -126,6 +126,16 @@ edit --arg w "$r" --arg root "$wt" '.design_worktree = $w | .root = $root'
 assert_contains "$(err unit-start ENG-12)" "herd: error: loop: design worktree" "main checkout refused from a linked root"
 assert_file "$r/canary"
 
+# another linked worktree of this repo (a herd unit's, say) is not the design worktree
+fresh; herd_wt="$r/.claude/worktrees/eng-9"
+git -C "$r" worktree add -q -b feat/eng-9 "$herd_wt" dev; : > "$herd_wt/fix.txt"
+L ledger set-str .design_worktree "$herd_wt"
+assert_exit 1 "$LOOP/scripts/loop.sh" "$run" unit-start ENG-12
+assert_contains "$(err unit-start ENG-12)" "herd: error: loop: design worktree is not this run's" "other linked worktree refused"
+assert_file "$herd_wt/fix.txt" "herd worktree's untracked file survives"
+assert_eq "$(git -C "$herd_wt" rev-parse --abbrev-ref HEAD)" feat/eng-9 "herd worktree stays on its branch"
+assert_eq "$(logged 'tab create')" 0 "no tab on refusal"
+
 # ---- the brief ------------------------------------------------------------------
 fresh; mkdir -p "$run/units/eng-10/artifacts" "$run/units/eng-11/artifacts"; printf 'r {{X}}\n' > "$run/rulings.md"
 b="$(cat "$(L unit-start ENG-12)")"
@@ -164,6 +174,13 @@ assert_exit 1 "$LOOP/scripts/loop.sh" "$run" inbox-delivered ENG-12 09
 assert_exit 1 "$LOOP/scripts/loop.sh" "$run" inbox-write ENG-12 09 "$r/nope.md"
 assert_eq "$(L inbox-write ENG-12 09 "$u/issue.md")" "$u/inbox/09.md" "inbox path printed"
 assert_eq "$(ls -A "$u/inbox")" "09.md" "no temp file left"
+# a rewritten answer has not been delivered, whatever happened to the one it replaces
+L inbox-delivered ENG-12 10 2>/dev/null || true
+L inbox-write ENG-12 10 "$u/issue.md" >/dev/null; L inbox-delivered ENG-12 10
+assert_eq "$(L outbox-next ENG-12)" "NONE" "delivered answer"
+printf 'correction\n' > "$r/fix.md"; L inbox-write ENG-12 10 "$r/fix.md" >/dev/null
+assert_eq "$(L outbox-next ENG-12)" "PENDING-DELIVERY 10 $u/inbox/10.md" "rewrite is pending again"
+assert_no_file "$u/inbox/10.delivered" "stale delivery marker removed"
 : > "$u/bs.failed"; : > "$u/bs.done"; assert_eq "$(L outbox-next ENG-12)" "FAILED" "failed wins"
 assert_no_file "$c" "nothing executed"
 

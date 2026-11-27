@@ -265,7 +265,8 @@ inbox_write() {              # ID NN FILE -> inbox path
   [ -f "$file" ] || herd_die "loop: no answer file: $file"
   mkdir -p "$UDIR/inbox"
   tmp="$(mktemp "$UDIR/inbox/.$nn.XXXXXX")"
-  if ! { cat -- "$file" > "$tmp" && mv "$tmp" "$UDIR/inbox/$nn.md"; }; then
+  # the marker goes before the new text arrives: a rewritten answer is sent again
+  if ! { cat -- "$file" > "$tmp" && rm -f "$UDIR/inbox/$nn.delivered" && mv "$tmp" "$UDIR/inbox/$nn.md"; }; then
     rm -f "$tmp"; herd_die "loop: could not write $UDIR/inbox/$nn.md"
   fi
   log "answered $UNIT message $nn"
@@ -375,7 +376,8 @@ check_bs() {                 # ID -> DONE (0) | FAILED + text (2) | NONE why (3)
 
 # ---- the brainstormer session --------------------------------------------------------
 # unit-start force-checks-out and cleans this directory, so it must be provably the disposable
-# one: a linked worktree of this repo, never the main checkout or the run's root.
+# one: this run's own <root>/.claude/worktrees/<slug>-design, a linked worktree of this repo,
+# never the main checkout or the run's root.
 design_worktree() {          # -> canonical path, or dies
   local wt real root list
   wt="$(L '.design_worktree // ""')"
@@ -383,6 +385,8 @@ design_worktree() {          # -> canonical path, or dies
   real="$(cd "$wt" 2>/dev/null && pwd -P)" || herd_die "loop: design worktree is missing: $wt"
   root="$(cd "$(L .root)" 2>/dev/null && pwd -P)" || herd_die "loop: design worktree check failed, no repo root: $(L .root)"
   [ "$real" != "$root" ] || herd_die "loop: design worktree is the repo root: $wt"
+  [ "$real" = "$root/.claude/worktrees/$SLUG-design" ] \
+    || herd_die "loop: design worktree is not this run's $root/.claude/worktrees/$SLUG-design: $wt"
   [ "$(git -C "$real" rev-parse --show-toplevel 2>/dev/null)" = "$real" ] \
     || herd_die "loop: design worktree is not the top of a git worktree: $wt"
   list="$(git -C "$root" worktree list --porcelain | sed -n 's/^worktree //p' | sed 1d)"   # 1st = main checkout
