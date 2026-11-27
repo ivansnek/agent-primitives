@@ -9,6 +9,7 @@
 #   unit-start ID | restart ID | finish-agent ID | bump ID COUNTER | check-bs ID | archive ID
 #   outbox-next ID | inbox-write ID NN FILE | inbox-delivered ID NN | adr-next
 #   prompt-wait NAME TEXT [TIMEOUT_MS] | wait NAME [TIMEOUT_MS] | screen NAME [LINES] | keys NAME KEY...
+#   exec ID | exec-resume ID | herd-status ID | unit-done ID | unit-skip ID
 # Every ledger write bumps updated_at and re-renders PROGRESS.md. Unit text (titles, rulings,
 # notes) is untrusted: it reaches jq through --arg/--argjson/files only. JQ and JQ_PATH
 # arguments are the caller's own code.
@@ -304,14 +305,17 @@ file_under() {               # ROOT DIR REL
   case "$real/" in "$base"/*) return 0 ;; esac
   return 1
 }
+unit_files() {               # INDEX ADR_DIR -> "<allowed dir><TAB><path>" for its spec, plan and ADRs
+  jq -r --argjson i "$1" --arg adr "$2" '
+    .units[$i] | ["docs/superpowers/specs", .spec], ["docs/superpowers/plans", .plan], ((.adrs // [])[] | [$adr, .])
+    | select(.[1] != null) | @tsv' "$RUN_JSON"
+}
 archive() {                  # ID: copy spec, plan and ADRs to units/<uslug>/artifacts/
   local root adr dir rel item items=()
   unit_ctx "$1"
   root="$(L .root)"; adr="$(loop_adr_dir "$root")" || exit 1
-  # "<allowed dir><TAB><path>". The ledger's paths came from an agent, so each is checked again.
-  while IFS= read -r item; do items+=("$item"); done < <(jq -r --argjson i "$I" --arg adr "$adr" '
-    .units[$i] | ["docs/superpowers/specs", .spec], ["docs/superpowers/plans", .plan], ((.adrs // [])[] | [$adr, .])
-    | select(.[1] != null) | @tsv' "$RUN_JSON")
+  # The ledger's paths came from an agent, so each is checked again.
+  while IFS= read -r item; do items+=("$item"); done < <(unit_files "$I" "$adr")
   # all checked before the first copy (@tsv escapes tabs and newlines, so such a path fails too)
   for item in ${items[@]+"${items[@]}"}; do
     dir="${item%%$'\t'*}"; rel="${item#*$'\t'}"
@@ -498,6 +502,182 @@ bump() {                     # ID COUNTER -> new count
   jq -r --argjson i "$I" --arg c "$2" '.units[$i].recovery[$c]' "$RUN_JSON"
 }
 
+# ---- parent chains ---------------------------------------------------------------
+# A parent that collapsed into its only child has no unit, so its own parent is known only to
+# map.json. A missing or unreadable map ends the chain there.
+CHAIN_DEF='def chain($id):               # ID -> its ancestors, nearest first; a loop ends the walk
+  ($map + (reduce .units[] as $u ({}; .[$u.id | ascii_upcase] = (($u.parent // "") | ascii_upcase)))) as $P
+  | [$id | ascii_upcase]
+  | until(($P[.[-1]] // "") as $p | $p == "" or any(.[]; . == $p); . + [$P[.[-1]]])
+  | .[1:];'
+map_parents() {              # -> {"ID": "PARENT ID"} from map.json, or {}
+  local out
+  out="$(jq -sc '[.[0].issues[]? | objects | select((.id | type) == "string" and (.parent | type) == "string")
+           | {key: (.id | ascii_upcase), value: (.parent | ascii_upcase)}] | from_entries' \
+    "$RUN_DIR/map.json" 2>/dev/null)" || out='{}'
+  printf '%s\n' "$out"
+}
+
+# ---- execution (one herd run per issue unit) --------------------------------------
+herd_ledger() {              # (after unit_ctx) -> the unit's herd ledger path
+  printf '%s/.claude/herd-runs/%s/run.json\n' "$(L .root)" "$USLUG"
+}
+exec_line() { printf 'HERD-RUN %s ORCH %s-orch\n' "$(herd_ledger)" "$USLUG"; }
+# herd finds the repo from the cwd and reports on stdout, which is ours: its report goes to stderr.
+herd_launch() {              # launch.sh args...; exits with herd's status when it fails
+  local root; root="$(L .root)"
+  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
+    cd "$root" && "$HERD_SCRIPTS_DIR/launch.sh" "$@" ) >&2 || exit $?
+}
+carry() {                    # ROOT WORKTREE REL: copy if missing; never through a link out of the worktree
+  local dest="$2/$3" top dir real
+  top="$(cd "$2" 2>/dev/null && pwd -P)" || return 1
+  dir="$(dirname "$dest")"
+  while [ ! -e "$dir" ] && [ ! -L "$dir" ]; do dir="$(dirname "$dir")"; done
+  real="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+  case "$real/" in "$top"/*) ;; *) return 1 ;; esac
+  if [ -e "$dest" ] || [ -L "$dest" ]; then return 0; fi
+  mkdir -p "$(dirname "$dest")" && cp -- "$1/$3" "$dest"
+}
+exec_unit() {                # ID -> HERD-RUN line
+  local root adr wt tip plan item dir rel e ok flag v carried_json
+  local items=() epics=() carried=() flags=()
+  unit_ctx "$1"
+  root="$(L .root)"; adr="$(loop_adr_dir "$root")" || exit 1
+  [ "$(unit_get "$I" .kind)" = issue ] || herd_die "loop: $UNIT is not an issue unit: only those are executed"
+  plan="$(unit_get "$I" '.plan // ""')"
+  [ -n "$plan" ] && [ -n "$(unit_get "$I" '.spec // ""')" ] || herd_die "loop: $UNIT needs a spec and a plan before exec"
+  tip="$(L '.stack_tip // ""')"
+  [ -n "$tip" ] || herd_die "loop: no stack tip in the ledger"
+  # finished epic designs above this unit that no branch carries yet
+  while IFS= read -r e; do epics+=("$e"); done < <(jq -r --argjson i "$I" --argjson map "$(map_parents)" "$CHAIN_DEF"'
+    chain(.units[$i].id) as $up
+    | .units | to_entries[]
+    | select(.value.kind == "epic-design" and .value.phase == "done" and .value.carried_by == null
+             and (.value.id | ascii_upcase | IN($up[])))
+    | .key' "$RUN_JSON")
+  # everything is checked before the launch: after it, exec cannot be run again (the branch exists)
+  for e in "$I" ${epics[@]+"${epics[@]}"}; do
+    while IFS= read -r item; do
+      dir="${item%%$'\t'*}"; rel="${item#*$'\t'}"
+      file_under "$root" "$dir" "$rel" || herd_die "loop: cannot carry $rel: not a file under $root/$dir"
+      items+=("$e"$'\t'"$item")
+    done < <(unit_files "$e" "$adr")
+  done
+  for flag in worker_model:--worker-model review_model:--review-model execution:--execution; do
+    v="$(L ".herd.${flag%%:*} // \"\"")"
+    [ -z "$v" ] || flags+=("${flag#*:}" "$v")
+  done
+
+  herd_launch --slug "$USLUG" --base "$tip" ${flags[@]+"${flags[@]}"} "$plan"
+
+  # herd is running now: a copy that fails is logged, and the run is recorded all the same
+  wt="$root/.claude/worktrees/$USLUG"
+  for e in "$I" ${epics[@]+"${epics[@]}"}; do
+    ok=1
+    for item in ${items[@]+"${items[@]}"}; do
+      [ "${item%%$'\t'*}" = "$e" ] || continue
+      item="${item#*$'\t'}"; dir="${item%%$'\t'*}"; rel="${item#*$'\t'}"
+      [ "$dir" != docs/superpowers/plans ] || continue          # herd brings the plan itself
+      if ! carry "$root" "$wt" "$rel"; then
+        ok=0; log "$UNIT: not carried $rel into $wt"; herd_log "loop: warning: not carried $rel into $wt"
+      fi
+    done
+    if [ "$e" != "$I" ] && [ "$ok" = 1 ]; then carried+=("$(unit_get "$e" .id)"); fi
+  done
+  carried_json="$(jq -nc '$ARGS.positional' --args ${carried[@]+"${carried[@]}"})"
+  write "executing $UNIT on feat/$USLUG (base $tip)" \
+    '.units[$i] |= (.herd_slug = $slug | .branch = "feat/" + $slug | .phase = "executing")
+     | .units |= map(if .id | IN($carried[]) then .carried_by = $unit else . end)' \
+    --argjson i "$I" --arg slug "$USLUG" --arg unit "$UNIT" --argjson carried "$carried_json"
+  exec_line
+}
+exec_resume() {              # ID -> HERD-RUN line
+  unit_ctx "$1"
+  herd_launch --resume "$USLUG"
+  exec_line
+}
+herd_status() {              # ID -> "<status> [<failed stage>]" | missing
+  local j; unit_ctx "$1"; j="$(herd_ledger)"
+  if [ ! -f "$j" ]; then echo missing; return; fi
+  jq -er '[.status, .failed_stage // empty] | join(" ")' "$j" 2>/dev/null || herd_die "loop: unreadable herd ledger: $j"
+}
+
+# ---- unit end ----------------------------------------------------------------------
+# Deleting is the exception: "delete" is printed only when every check positively passed; any
+# other output, and any git failure, keeps the file.
+copy_verdict() {             # ROOT BRANCH DIR REL -> "delete", or why the main-checkout copy stays
+  local root="$1" branch="$2" dir="$3" rel="$4" ref="refs/heads/$2" real top rc shipped here
+  file_under "$root" "$dir" "$rel" || { echo "not a regular file under $dir"; return; }
+  real="$(cd "$root" && pwd -P)" && top="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" && [ "$top" = "$real" ] \
+    || { echo "git error: $root is not confirmed as the top of a checkout"; return; }
+  # icase: on a case-insensitive disk another spelling names the same tracked file
+  rc=0; git -C "$root" ls-files --error-unmatch -- ":(icase,literal)$rel" >/dev/null 2>&1 || rc=$?
+  case "$rc" in 1) ;; 0) echo tracked; return ;; *) echo "git error: ls-files exit $rc"; return ;; esac
+  rc=0; git -C "$root" check-ignore -q -- "$rel" >/dev/null 2>&1 || rc=$?
+  case "$rc" in 1) ;; 0) echo ignored; return ;; *) echo "git error: check-ignore exit $rc"; return ;; esac
+  git -C "$root" cat-file -e "$ref:$rel" 2>/dev/null || { echo "not on $branch (or git error)"; return; }
+  shipped="$(git -C "$root" rev-parse --verify -q "$ref:$rel" 2>/dev/null)" && [ -n "$shipped" ] \
+    || { echo "git error: rev-parse"; return; }
+  here="$(git -C "$root" hash-object --no-filters -- "$rel" 2>/dev/null)" && [ -n "$here" ] \
+    || { echo "git error: hash-object"; return; }
+  [ "$here" = "$shipped" ] || { echo "differs from $branch: it holds work that never shipped"; return; }
+  echo delete
+}
+cleanup() {                  # BRANCH (after unit_ctx): drop the main-checkout copies the branch now holds
+  local branch="$1" root adr e item dir rel verdict
+  root="$(L .root)"; adr="$(loop_adr_dir "$root")" || exit 1
+  while IFS= read -r e; do
+    while IFS= read -r item; do
+      dir="${item%%$'\t'*}"; rel="${item#*$'\t'}"
+      verdict="$(copy_verdict "$root" "$branch" "$dir" "$rel")" || verdict="check failed"
+      if [ "$verdict" != delete ]; then log "$UNIT cleanup: kept $rel: $verdict"
+      elif rm -f -- "$root/$rel"; then log "$UNIT cleanup: deleted $root/$rel (untracked, on $branch)"
+      else log "$UNIT cleanup: kept $rel: could not delete it"
+      fi
+    done < <(unit_files "$e" "$adr")
+  done < <(jq -r --argjson i "$I" --arg unit "$UNIT" '
+    $i, (.units | to_entries[] | select(.value.kind == "epic-design" and .value.carried_by == $unit) | .key)' "$RUN_JSON")
+}
+unit_done() {                # ID -> DONE <stack tip>
+  local branch status j
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR  # they would redirect "git -C" in cleanup
+  unit_ctx "$1"
+  if [ "$(unit_get "$I" .kind)" != issue ]; then
+    write "unit done: $UNIT" '.units[$i].phase = "done"' --argjson i "$I"
+  # a repeat must not pull the stack tip back below units finished since
+  elif [ "$(unit_get "$I" .phase)" != done ]; then
+    branch="$(unit_get "$I" '.branch // ""')"
+    [ -n "$branch" ] || herd_die "loop: $UNIT has not been executed (no branch in the ledger)"
+    j="$(herd_ledger)"
+    status="$(jq -r '.status // "unknown"' "$j" 2>/dev/null)" || status=missing
+    [ "$status" = done ] || herd_die "loop: $UNIT: herd run is not done (${status:-unknown}): $j"
+    herd_agent_exit "$USLUG-orch" || herd_log "loop: $USLUG-orch did not exit; leaving it"
+    cleanup "$branch"
+    write "unit done: $UNIT, stack tip $branch" '.units[$i].phase = "done" | .stack_tip = $b' \
+      --argjson i "$I" --arg b "$branch"
+  fi
+  printf 'DONE %s\n' "$(L .stack_tip)"
+}
+unit_skip() {                # ID -> DEPENDENTS <ids...>
+  local deps
+  unit_ctx "$1"
+  deps="$(jq -r --arg id "$UNIT" --argjson map "$(map_parents)" "$CHAIN_DEF"'
+    ($id | ascii_upcase) as $x | . as $run
+    | [.units | sort_by(.order)[]
+       | select(.phase != "done" and .phase != "skipped" and (.id | ascii_upcase) != $x)
+       | .id as $u
+       | select(any((.blocked_by // [])[]; ascii_upcase == $x) or any($run | chain($u)[]; . == $x))
+       | $u] | join(" ")' "$RUN_JSON")"
+  # an unfinished carrier never ships what it carried: the next child to execute takes it
+  write "skipped $UNIT" \
+    '(.units[$i].phase == "done") as $shipped
+     | .units[$i].phase = "skipped"
+     | if $shipped then . else .units |= map(if .carried_by == $unit then .carried_by = null else . end) end' \
+    --argjson i "$I" --arg unit "$UNIT"
+  printf 'DEPENDENTS%s\n' "${deps:+ $deps}"
+}
+
 case "$CMD" in
   ledger)
     case "${1:-}" in
@@ -530,6 +710,11 @@ case "$CMD" in
   inbox-write) need $# 3 "inbox-write ID NN FILE"; inbox_write "$1" "$2" "$3" ;;
   inbox-delivered) need $# 2 "inbox-delivered ID NN"; inbox_delivered "$1" "$2" ;;
   adr-next) adr_next ;;
+  exec) need $# 1 "exec ID"; exec_unit "$1" ;;
+  exec-resume) need $# 1 "exec-resume ID"; exec_resume "$1" ;;
+  herd-status) need $# 1 "herd-status ID"; herd_status "$1" ;;
+  unit-done) need $# 1 "unit-done ID"; unit_done "$1" ;;
+  unit-skip) need $# 1 "unit-skip ID"; unit_skip "$1" ;;
   prompt-wait) need $# 2 "prompt-wait NAME TEXT [TIMEOUT_MS]"; herd_agent_prompt_wait "$@" ;;
   wait) need $# 1 "wait NAME [TIMEOUT_MS]"; herd_agent_wait "$@" ;;
   screen) need $# 1 "screen NAME [LINES]"; herd_agent_screen "$@" ;;
