@@ -326,7 +326,7 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
    f. **Skip** (the human said skip for unit ID, in any pause that names it).
       1. After `unpause`: AGENT live → `finish-agent ID`. A herd run is left as it is.
       2. `unit-skip ID` → `DEPENDENTS <ids…>`: units below it on the parent chain and units
-         blocked by it. None → step 4.
+         blocked by it or by an epic above it. None → step 4.
       3. Otherwise one pause `skip-dependents` (unit `-`) listing each dependent and why (child
          of, blocked by); per dependent: skip it too (recommended when it is blocked by the
          skipped unit) or proceed without it. On the answer: each one to skip → f again (its
@@ -440,7 +440,7 @@ option in every pause that names a unit → f.
 | `revise-cap` | more than {{MAX_REVISIONS}} revise rounds | approve as is → Approve · the human's instruction → inbox, phase `brainstorming`, Deliver |
 | `breakdown` | the worker proposed slices | Breakdown 3 or 4 |
 | `exec-failed` | `exec`/`exec-resume` failed, or herd failed | continue → `herd-status ID`: `failed <stage>` → `exec-resume ID` (herd resumes at that stage), then Watch; otherwise e from its start |
-| `stuck` | `ORCH-GONE` twice, `STUCK`, or a broken watcher | resume herd → `exec-resume ID`, then Watch · wait → Watch again (its clocks restart: say so in the question) |
+| `stuck` | `ORCH-GONE` twice, `STUCK`, or a broken watcher | resume herd → `exec-resume ID`, then Watch (herd refuses a live orchestrator unless the run is `failed`: while `<uslug>-orch` is live, the question tells the human to exit it first with `herdr agent prompt <uslug>-orch /exit`) · wait → Watch again (its clocks restart: say so in the question) |
 | `recovery-cap` | a recovery cap, `RESTART-LIMIT`, `bs.failed`, a bad sentinel, a helper error | retry by phase: `executing` → e from its start. `planning` and `check-bs ID` prints `DONE` → d's `DONE` branch (an `issue` unit goes on to e; a brainstormer that finished is never restarted). Otherwise the brainstormer: `unit-set ID .recovery '{}'`, `unit-set ID .restarts 0`; when `U/bs.failed` exists or `check-bs` printed `FAILED`, always `restart ID` (it removes both sentinels; `outbox-next` would print `FAILED` forever) and give it the human's instruction; else AGENT live → give it the instruction, not live → `restart ID` and give it the instruction. To give it: write the instruction to a new file, then `prompt-wait AGENT "Read <file>: the human's instruction. Then continue the brief at B." T` (background), then b. `unit-start ID` only for a fresh brainstorm the human asked for, on a unit with no `.branch` |
 | `skip-dependents` | a skipped unit has dependents | f.3 |
 

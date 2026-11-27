@@ -174,6 +174,26 @@ assert_contains "$out" "--resume eng-4-loop" "start failure points at resume"
 assert_file "$r/.claude/loop-runs/eng-4-loop/run.json" "start failure keeps the ledger"
 rm "$FAKE_HERDR_STATE/agent-start-fails"
 
+# a base that is not a ref name would mean another commit in the design worktree: pinned
+use_fake_herdr; r="$(make_repo)"; cd "$r"
+git -C "$r" commit -q --allow-empty -m second
+head="$(git -C "$r" rev-parse HEAD)"; prev="$(git -C "$r" rev-parse HEAD~1)"
+based() {                    # SLUG BASE_ARG WANT_STORED WANT_COMMIT NAME
+  "$LA" --slug "$1" --base "$2" ENG-5 >/dev/null 2>&1
+  assert_eq "$(jq -r '.base + " " + .stack_tip' "$r/.claude/loop-runs/$1/run.json")" "$3 $3" "$5: stored"
+  assert_eq "$(git -C "$r/.claude/worktrees/$1-design" rev-parse HEAD)" "$4" "$5: design worktree"
+}
+based b-rel 'HEAD~1' "$prev" "$prev" "relative revision"
+based b-head HEAD dev "$head" "HEAD on a branch"
+based b-at @ dev "$head" "@ on a branch"
+based b-name dev dev "$head" "branch name"
+git -C "$r" branch older "$prev"; git -C "$r" checkout -q older; git -C "$r" checkout -q dev
+based b-last '@{-1}' older "$prev" "previous branch"
+git -C "$r" branch -q --set-upstream-to=older dev
+based b-up '@{u}' older "$prev" "upstream"
+git -C "$r" checkout -q --detach
+based b-detached HEAD "$head" "$head" "detached HEAD"
+
 # the prompt file (source layout only: a deployed install renames it)
 p="$LOOP/../../prompts/linear-loop.prompt.md"
 case "$LOOP" in */.apm/skills/*)

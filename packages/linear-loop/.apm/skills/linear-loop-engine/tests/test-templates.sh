@@ -47,6 +47,7 @@ has "$orch" "/linear-loop --resume dummy-slug" "map-only stop says how to contin
 assert_eq "$(printf '%s\n' "$orch" | tr '\n' ' ' | tr -s ' ' | grep -oF 'Exit this session (`/exit`), then continue with `/linear-loop --resume dummy-slug`' | wc -l | tr -d ' ')" 2 \
   "both map-only stops say to exit first"
 has "$orch" "/execute-plans --resume" "a failed herd run points at herd's resume"
+has "$(printf '%s\n' "$orch" | grep -F '| `stuck` |')" "exit it first with \`herdr agent prompt <uslug>-orch /exit\`" "resume herd needs the live orchestrator exited"
 has "$orch" "In Review" "status fallback name documented"
 has "$orch" "Never set a status of type \`completed\`" "never Done"
 has "$orch" "bump ID orch_gone" "ORCH-GONE retry counted in the ledger"

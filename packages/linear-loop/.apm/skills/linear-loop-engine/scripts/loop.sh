@@ -737,10 +737,15 @@ unit_skip() {                # ID -> DEPENDENTS <ids...>
   unit_ctx "$1"
   deps="$(jq -r --arg id "$UNIT" --argjson map "$(map_parents)" "$CHAIN_DEF"'
     ($id | ascii_upcase) as $x | . as $run
+    | ($run | chain($x)) as $up
     | [.units | sort_by(.order)[]
        | select(.phase != "done" and .phase != "skipped" and (.id | ascii_upcase) != $x)
        | .id as $u
-       | select(any((.blocked_by // [])[]; ascii_upcase == $x) or any($run | chain($u)[]; . == $x))
+       | ($run | chain($u)) as $above
+       # blocked by an epic above the skipped unit = blocked by it too, unless under that epic
+       | select(any($above[]; . == $x)
+           or any((.blocked_by // [])[] | ascii_upcase;
+                  . as $b | $b == $x or (any($up[]; . == $b) and (any($above[]; . == $b) | not))))
        | $u] | join(" ")' "$RUN_JSON")"
   # an unfinished carrier never ships what it carried: the next child to execute takes it
   write "skipped $UNIT" \

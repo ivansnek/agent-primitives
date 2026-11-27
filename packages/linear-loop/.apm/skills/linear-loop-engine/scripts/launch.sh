@@ -202,6 +202,15 @@ set_run "$SLUG"
 [ -n "$BASE" ] || BASE="$(git branch --show-current)"
 [ -n "$BASE" ] || herd_die "loop: detached HEAD: pass --base BRANCH"
 git rev-parse --verify --quiet --end-of-options "$BASE^{commit}" >/dev/null || herd_die "loop: base ref not found: $BASE"
+# HEAD~1 and the like name another commit in the design worktree: pin anything that is not a ref
+case "$BASE:$(git rev-parse --symbolic-full-name --end-of-options "$BASE" 2>/dev/null | tail -n 1)" in
+  HEAD:*|@:*)     # symbolic, yet it moves: the branch it names (the merge target), else the commit
+    BASE="$(git branch --show-current)"; [ -n "$BASE" ] || BASE="$(git rev-parse --verify --quiet HEAD)" ;;
+  *@\{*:refs/*)   # @{-1}, @{u}: relative to this checkout, so store the ref they name
+    BASE="$(git rev-parse --abbrev-ref --end-of-options "$BASE" | tail -n 1)" ;;
+  *:refs/*) ;;
+  *) BASE="$(git rev-parse --verify --quiet --end-of-options "$BASE^{commit}")" ;;
+esac
 DESIGN="$ROOT/.claude/worktrees/$SLUG-design"
 [ ! -e "$RUN_JSON" ] || herd_die "loop: run ledger already exists: $RUN_JSON (use --resume $SLUG or pass --slug)"
 ! herd_agent_live "$ORCH" || herd_die "loop: agent $ORCH is already live"

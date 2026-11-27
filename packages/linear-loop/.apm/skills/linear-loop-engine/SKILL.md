@@ -258,7 +258,7 @@ re-renders `PROGRESS.md`.
 | `exec-resume ID` | See below; prints the same line. |
 | `herd-status ID` | `<status> [<failed stage>]` or `missing`. |
 | `unit-done ID` | Requires herd `done` for an issue unit; exits the herd orchestrator, cleans up, moves the stack tip: `DONE <tip>`. Safe to repeat. |
-| `unit-skip ID` | Marks it `skipped` and prints `DEPENDENTS <ids…>`: unfinished units anywhere below it on the parent chain (transitive descendants, through collapsed parents) and units directly blocked by it. |
+| `unit-skip ID` | Marks it `skipped` and prints `DEPENDENTS <ids…>`: unfinished units anywhere below it on the parent chain (transitive descendants, through collapsed parents) and units blocked by it, or (from outside that epic) by an epic above it. |
 
 `exec-resume`:
 

@@ -256,6 +256,9 @@ exited_then_resumed() {      # LABEL: /exit sent to eng-12-orch, then herd's res
 fresh; L exec ENG-12 >/dev/null 2>&1; herd_failed; orch_live; exits_ok; : > "$FAKE_HERDR_LOG"
 assert_eq "$(HERDR_BIN="$r/herdr" L exec-resume ENG-12 2>/dev/null || true)" "HERD-RUN $hj ORCH eng-12-orch" "failed + live: resumed"
 exited_then_resumed "recorded, failed, live"
+# the watcher starts right after this: it must see a running run, not the old failure
+orch_live; out="$(LOOP_POLL_SECONDS=0 LOOP_STALE_LIMIT_SECONDS=0 "$LOOP/scripts/wait-run.sh" "$hj" eng-12-orch)" && rc=0 || rc=$?
+assert_eq "$out $rc" "STUCK stale 7" "resumed run is not reported as failed"
 # the orchestrator will not exit: no blind resume, a loop: error, nothing written
 fresh; L exec ENG-12 >/dev/null 2>&1; herd_failed; orch_live; cp "$run/run.json" "$r/before.json"; : > "$FAKE_HERDR_LOG"
 out="$(err exec-resume ENG-12)"
@@ -300,6 +303,13 @@ L unit-set ENG-11 .phase '"done"'; assert_eq "$(L unit-skip ENG-12)" "DEPENDENTS
 fresh; L unit-set-str ENG-11 .parent ENG-12
 assert_eq "$(L unit-skip ENG-10)" "DEPENDENTS ENG-12 ENG-11" "grandchildren, in order"
 
+# blocked by an epic above the skipped unit counts, unless the unit is under that epic too
+outside() { L unit-set ENG-11 .parent null; L unit-set ENG-11 .blocked_by "$1"; }
+fresh; outside '["ENG-10"]'; assert_eq "$(L unit-skip ENG-12)" "DEPENDENTS ENG-11" "blocked by the epic above"
+fresh; outside '["eng-10"]'; assert_eq "$(L unit-skip eng-12)" "DEPENDENTS ENG-11" "blocked by the epic above, any case"
+fresh; L unit-set ENG-11 .blocked_by '["ENG-10"]'
+assert_eq "$(L unit-skip ENG-12)" "DEPENDENTS" "a sibling under the blocking epic is not a dependent"
+
 # ---- a collapsed parent (ENG-15: no unit, between ENG-12 and the epic) ------------
 collapsed() { fresh; L unit-set-str ENG-12 .parent ENG-15; L unit-set-str ENG-11 .parent ENG-12; }
 map() { printf '{"given":["ENG-10"],"issues":[{"id":"eng-15","parent":"eng-10"},{"id":"ENG-12","parent":"ENG-15"}]}' > "$run/map.json"; }
@@ -311,6 +321,8 @@ collapsed; map; assert_eq "$(L unit-skip ENG-10)" "DEPENDENTS ENG-12 ENG-11" "de
 collapsed; L exec ENG-12 >/dev/null 2>&1
 assert_no_file "$wt/docs/superpowers/specs/epic.md" "no map: the chain ends at the collapsed parent"
 assert_eq "$(led '.units[1].phase')" executing "no map is tolerated"
+fresh; L unit-set-str ENG-12 .parent ENG-15; outside '["ENG-15"]'; map
+assert_eq "$(L unit-skip ENG-12)" "DEPENDENTS ENG-11" "blocked by a collapsed parent of the skipped unit"
 for body in absent 'not json' '[]' '{"issues":[3,{"id":"ENG-15"}]}' '{"issues":[{"id":"ENG-15","parent":"ENG-12"}]}'; do
   collapsed; [ "$body" = absent ] || printf '%s' "$body" > "$run/map.json"
   assert_eq "$(L unit-skip ENG-10)" "DEPENDENTS" "tolerated map: $body"
