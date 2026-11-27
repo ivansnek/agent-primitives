@@ -1,0 +1,7 @@
+{"given": ["ENG-10"],
+ "issues": [
+  {"id": "ENG-13", "uuid": "u13", "title": "Wire the export button", "statusType": "unstarted", "parent": "ENG-10", "createdAt": "2026-02-03T00:00:00Z", "blockedBy": ["ENG-11"]},
+  {"id": "ENG-11", "uuid": "u11", "title": "Export service", "statusType": "unstarted", "parent": "ENG-10", "createdAt": "2026-02-05T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-10", "uuid": "u10", "title": "CSV export", "statusType": "started", "parent": null, "createdAt": "2026-02-01T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-12", "uuid": "u12", "title": "Export schema", "statusType": "backlog", "parent": "ENG-10", "createdAt": "2026-02-02T00:00:00Z", "blockedBy": []}
+ ]}

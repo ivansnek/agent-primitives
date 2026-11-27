@@ -45,5 +45,6 @@ case "${1:-} ${2:-}" in
     echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent wait") echo '{"result":{"agent":{"agent_status":"idle"}}}' ;;
   "agent read") cat "$FAKE_HERDR_STATE/screen.txt" 2>/dev/null || true ;;
+  "workspace create") echo '{"id":"t","result":{"type":"workspace_created","workspace":{"workspace_id":"wL"},"tab":{"tab_id":"wL:t1"},"root_pane":{"pane_id":"wL:p1"}}}' ;;
   *) echo '{"result":{}}' ;;
 esac

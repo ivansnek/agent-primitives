@@ -1,0 +1,6 @@
+{"given": ["ENG-80"],
+ "issues": [
+  {"id": "ENG-80", "uuid": "u80", "title": "Old epic left open", "statusType": "started", "parent": null, "createdAt": "2026-05-01T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-81", "uuid": "u81", "title": "Done part", "statusType": "completed", "parent": "ENG-80", "createdAt": "2026-05-02T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-82", "uuid": "u82", "title": "Dropped part", "statusType": "canceled", "parent": "ENG-80", "createdAt": "2026-05-03T00:00:00Z", "blockedBy": []}
+ ]}

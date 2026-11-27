@@ -1,0 +1,5 @@
+{"given": ["ENG-1", "ENG-2"],
+ "issues": [
+  {"id": "ENG-1", "uuid": "u1", "title": "Use the new API", "statusType": "unstarted", "parent": null, "createdAt": "2026-01-01T00:00:00Z", "blockedBy": ["ENG-2"]},
+  {"id": "ENG-2", "uuid": "u2", "title": "Build the new API", "statusType": "backlog", "parent": null, "createdAt": "2026-01-05T00:00:00Z", "blockedBy": []}
+ ]}

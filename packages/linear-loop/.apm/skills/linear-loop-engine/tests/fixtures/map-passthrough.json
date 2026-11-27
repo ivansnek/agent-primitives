@@ -1,0 +1,8 @@
+{"given": ["ENG-170", "ENG-180", "ENG-175"],
+ "issues": [
+  {"id": "ENG-180", "uuid": "u180", "title": "Needs the collapsed parent", "statusType": "unstarted", "parent": null, "createdAt": "2026-10-25T00:00:00Z", "blockedBy": ["ENG-170"]},
+  {"id": "ENG-170", "uuid": "u170", "title": "Parent with one open child", "statusType": "started", "parent": null, "createdAt": "2026-10-23T00:00:00Z", "blockedBy": ["ENG-175", "OPS-20"]},
+  {"id": "ENG-171", "uuid": "u171", "title": "The only open child", "statusType": "unstarted", "parent": "ENG-170", "createdAt": "2026-10-24T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-175", "uuid": "u175", "title": "Prerequisite", "statusType": "unstarted", "parent": null, "createdAt": "2026-10-26T00:00:00Z", "blockedBy": []},
+  {"id": "OPS-20", "uuid": "o20", "title": "Outside work", "statusType": "triage", "parent": null, "createdAt": "2026-10-01T00:00:00Z", "blockedBy": []}
+ ]}

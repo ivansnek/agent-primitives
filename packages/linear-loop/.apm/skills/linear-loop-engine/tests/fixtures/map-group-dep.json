@@ -1,0 +1,7 @@
+{"given": ["ENG-60", "ENG-70"],
+ "issues": [
+  {"id": "ENG-62", "uuid": "u62", "title": "Report page", "statusType": "unstarted", "parent": "ENG-60", "createdAt": "2026-08-03T00:00:00Z", "blockedBy": ["ENG-70"]},
+  {"id": "ENG-70", "uuid": "u70", "title": "Auth middleware", "statusType": "unstarted", "parent": null, "createdAt": "2026-08-10T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-61", "uuid": "u61", "title": "Report model", "statusType": "unstarted", "parent": "ENG-60", "createdAt": "2026-08-02T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-60", "uuid": "u60", "title": "Reports", "statusType": "started", "parent": null, "createdAt": "2026-08-01T00:00:00Z", "blockedBy": []}
+ ]}

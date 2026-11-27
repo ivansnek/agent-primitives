@@ -1,0 +1,4 @@
+{"given": ["eng-1", "ENG-1", "Eng-1"],
+ "issues": [
+  {"id": "eng-1", "uuid": "u1", "title": "One issue, three spellings", "statusType": "unstarted", "parent": null, "createdAt": "2026-01-01T00:00:00Z", "blockedBy": ["eng-1"]}
+ ]}

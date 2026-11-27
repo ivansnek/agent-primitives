@@ -1,0 +1,7 @@
+{"given": ["ENG-130", "ENG-140"],
+ "issues": [
+  {"id": "ENG-130", "uuid": "u130", "title": "Sync epic", "statusType": "started", "parent": null, "createdAt": "2026-10-10T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-131", "uuid": "u131", "title": "Sync client", "statusType": "unstarted", "parent": "ENG-130", "createdAt": "2026-10-11T00:00:00Z", "blockedBy": ["ENG-140"]},
+  {"id": "ENG-132", "uuid": "u132", "title": "Sync protocol", "statusType": "unstarted", "parent": "ENG-130", "createdAt": "2026-10-12T00:00:00Z", "blockedBy": []},
+  {"id": "ENG-140", "uuid": "u140", "title": "Sync server", "statusType": "unstarted", "parent": null, "createdAt": "2026-10-09T00:00:00Z", "blockedBy": ["ENG-132"]}
+ ]}

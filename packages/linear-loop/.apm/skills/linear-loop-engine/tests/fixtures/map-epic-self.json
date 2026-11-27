@@ -1,0 +1,6 @@
+{"given": ["ENG-150"],
+ "issues": [
+  {"id": "ENG-150", "uuid": "u150", "title": "Epic blocked by its own child", "statusType": "started", "parent": null, "createdAt": "2026-10-20T00:00:00Z", "blockedBy": ["ENG-152"]},
+  {"id": "ENG-151", "uuid": "u151", "title": "First part", "statusType": "unstarted", "parent": "ENG-150", "createdAt": "2026-10-21T00:00:00Z", "blockedBy": ["ENG-150"]},
+  {"id": "ENG-152", "uuid": "u152", "title": "Second part", "statusType": "unstarted", "parent": "ENG-150", "createdAt": "2026-10-22T00:00:00Z", "blockedBy": []}
+ ]}

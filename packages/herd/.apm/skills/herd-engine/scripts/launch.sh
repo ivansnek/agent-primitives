@@ -99,6 +99,12 @@ if [ -n "$RESUME" ]; then
   [ -n "$PANE" ] || herd_die "unexpected tab create response: $tab_json"
   herd_ledger_set_str "$RUN_JSON" .orchestrator_pane "$PANE"
   herd_agent_start "$ORCH" "$PANE" -- --model "$MODEL" --permission-mode bypassPermissions >/dev/null || herd_die "could not start $ORCH in $PANE"
+  # A watcher started right after this resume must not read the old failure. Cleared before the
+  # prompt: until then the new orchestrator writes nothing.
+  if [ "$(herd_ledger_get "$RUN_JSON" .status)" = failed ]; then
+    herd_ledger_set "$RUN_JSON" .failed_stage null && herd_ledger_set_str "$RUN_JSON" .status running \
+      || herd_die "could not clear the failed status in $RUN_JSON"
+  fi
   "$HERDR_BIN" agent prompt "$ORCH" "Resume the herd run: read $RUN_DIR/orchestrator.md and follow it exactly. Run dir: $RUN_DIR" >/dev/null
   report "$RUN_JSON"
   exit 0

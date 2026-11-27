@@ -1,0 +1,4 @@
+{"given": ["ENG-1"],
+ "issues": [
+  {"id": "ENG-1", "uuid": "u1", "title": "Already shipped", "statusType": "completed", "parent": null, "createdAt": "2026-01-01T00:00:00Z", "blockedBy": []}
+ ]}
