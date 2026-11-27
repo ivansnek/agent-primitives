@@ -239,6 +239,54 @@ for change in '.phase "done" ENG-12 is done' '.phase "skipped" ENG-12 is skipped
   if cmp -s "$run/run.json" "$r/before.json"; then pass; else fail "refused adoption wrote the ledger ($change)"; fi
 done
 
+# ---- a failed herd run leaves its orchestrator live: exec-resume exits it first ------------
+herd_failed() { jq '.status="failed" | .failed_stage="plan-1"' "$hj" > "$r/t" && mv "$r/t" "$hj"; }
+exits_ok() {                 # a herdr whose eng-12-orch goes away on /exit
+  printf '#!/usr/bin/env bash\ncase "$*" in "agent prompt eng-12-orch /exit") rm -f "$FAKE_HERDR_STATE/agents.json" ;; esac\nexec "%s" "$@"\n' \
+    "$TESTS_DIR/fake-herdr" > "$r/herdr"; chmod +x "$r/herdr"
+}
+line_of() { { grep -nF -- "$1" "$FAKE_HERDR_LOG" || true; } | head -1 | cut -d: -f1; }
+exited_then_resumed() {      # LABEL: /exit sent to eng-12-orch, then herd's resume started it again
+  local x s
+  x="$(line_of "agent prompt eng-12-orch /exit")"; s="$(line_of "agent start eng-12-orch")"
+  if [ -n "$x" ] && [ -n "$s" ] && [ "$x" -lt "$s" ]; then pass; else fail "$1: no /exit before the resume (exit '${x}', start '${s}')"; fi
+  assert_contains "$(cat "$FAKE_HERDR_LOG")" "agent prompt eng-12-orch Resume the herd run" "$1: herd resumed"
+}
+# recorded unit (the exec-failed "continue" path)
+fresh; L exec ENG-12 >/dev/null 2>&1; herd_failed; orch_live; exits_ok; : > "$FAKE_HERDR_LOG"
+assert_eq "$(HERDR_BIN="$r/herdr" L exec-resume ENG-12 2>/dev/null || true)" "HERD-RUN $hj ORCH eng-12-orch" "failed + live: resumed"
+exited_then_resumed "recorded, failed, live"
+# the orchestrator will not exit: no blind resume, a loop: error, nothing written
+fresh; L exec ENG-12 >/dev/null 2>&1; herd_failed; orch_live; cp "$run/run.json" "$r/before.json"; : > "$FAKE_HERDR_LOG"
+out="$(err exec-resume ENG-12)"
+assert_contains "$out" "herd: error: loop: ENG-12: the failed herd run's orchestrator eng-12-orch did not exit" "exit failure is a loop error"
+assert_not_contains "$out" "still live" "herd's resume was not called"
+assert_not_contains "$(cat "$FAKE_HERDR_LOG")" "agent start" "no resume after a failed exit"
+if cmp -s "$run/run.json" "$r/before.json"; then pass; else fail "failed exit wrote the ledger"; fi
+# not failed: a live orchestrator is never exited, herd refuses as before
+fresh; L exec ENG-12 >/dev/null 2>&1; orch_live; : > "$FAKE_HERDR_LOG"
+assert_contains "$(err exec-resume ENG-12)" "herd: error: agent eng-12-orch is still live" "running + live: herd refuses"
+assert_not_contains "$(cat "$FAKE_HERDR_LOG")" "/exit" "running + live: not exited"
+# unrecorded unit: exited and resumed only once every refusal check has passed
+killed; herd_failed; orch_live; exits_ok
+assert_eq "$(HERDR_BIN="$r/herdr" L exec-resume ENG-12 2>/dev/null || true)" "HERD-RUN $hj ORCH eng-12-orch" "unrecorded, failed + live: same line"
+exited_then_resumed "unrecorded, failed, live"
+assert_eq "$(led '.units[1] | .phase + " " + .branch')" "executing feat/eng-12" "unrecorded, failed + live: recorded"
+assert_contains "$(logged)" "executing ENG-12 on feat/eng-12 (resumed)" "recorded as resumed, not adopted"
+killed; herd_failed; orch_live; cp "$run/run.json" "$r/before.json"
+assert_contains "$(err exec-resume ENG-12)" "herd: error: loop: ENG-12: the failed herd run's orchestrator eng-12-orch did not exit" "unrecorded: exit failure is a loop error"
+assert_not_contains "$(cat "$FAKE_HERDR_LOG")" "agent start" "unrecorded: no resume after a failed exit"
+if cmp -s "$run/run.json" "$r/before.json"; then pass; else fail "unrecorded: failed exit wrote the ledger"; fi
+for change in '.phase "done" ENG-12 is done' '.spec null ENG-12 needs a spec' '.kind "epic-design" ENG-12 is not an issue unit'; do
+  read -r path value message <<<"$change"
+  killed; herd_failed; orch_live; exits_ok; L unit-set ENG-12 "$path" "$value"
+  assert_contains "$(HERDR_BIN="$r/herdr" err exec-resume ENG-12)" "herd: error: loop: $message" "failed + live, refused first: $change"
+  assert_not_contains "$(cat "$FAKE_HERDR_LOG")" "/exit" "refused: orchestrator not exited ($change)"
+done
+killed; jq '.base="other" | .status="failed"' "$hj" > "$r/t" && mv "$r/t" "$hj"; orch_live; exits_ok
+assert_contains "$(HERDR_BIN="$r/herdr" err exec-resume ENG-12)" "is not this unit's" "failed + live, not this unit's run: refused"
+assert_not_contains "$(cat "$FAKE_HERDR_LOG")" "/exit" "not this unit's run: orchestrator not exited"
+
 # ---- unit-skip ------------------------------------------------------------------
 fresh; L exec ENG-12 >/dev/null 2>&1
 assert_eq "$(L unit-skip eng-12)" "DEPENDENTS" "empty line still printed"

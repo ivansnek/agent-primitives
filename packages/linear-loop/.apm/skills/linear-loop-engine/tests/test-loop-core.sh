@@ -100,6 +100,21 @@ assert_eq "$(grep -c '^- 20.*Z ' "$run/rulings.md")" 2 "one bullet per ruling"
 assert_contains "$(cat "$run/rulings.md")" "Z keep \$(touch $m)"$'\n''  and more' "continuation lines stay inside the bullet"
 assert_no_file "$m" "text never shell-expanded"
 L ruling every word kept; assert_contains "$(cat "$run/rulings.md")" "Z every word kept" "unquoted ruling"
+# --file: text the orchestrator did not author never reaches a command line
+hostile='human ruling: `touch '"$m"'` $(touch '"$m"') "q" '"'s'"' \\ \$HOME {{X}}'
+printf '%s\n' "$hostile" > "$r/reply.txt"
+L note --file "$r/reply.txt"; L ruling --file "$r/reply.txt"
+assert_eq "$(tail -1 "$run/orchestrator.log" | cut -d' ' -f2-)" "$hostile" "note --file: byte-exact log line"
+assert_eq "$(tail -1 "$run/rulings.md" | cut -d' ' -f3-)" "$hostile" "ruling --file: byte-exact bullet"
+printf 'line one\nline two\n' > "$r/multi.txt"; L ruling --file "$r/multi.txt"
+assert_contains "$(cat "$run/rulings.md")" "Z line one"$'\n''  line two' "ruling --file keeps continuation lines in the bullet"
+L note --file "$r/multi.txt"; assert_eq "$(tail -1 "$run/orchestrator.log" | cut -d' ' -f2-)" "line one line two" "note --file: one line"
+assert_no_file "$m" "--file text never shell-expanded"
+for c in note ruling fail; do
+  assert_contains "$(err $c --file "$r/missing.txt")" "herd: error: loop: no text file: $r/missing.txt" "$c --file: missing file"
+  assert_contains "$(err $c --file)" "herd: error: loop: usage: loop.sh RUN_DIR $c" "$c --file without a path"
+  assert_contains "$(err $c --file "$r/reply.txt" extra)" "herd: error: loop: usage: loop.sh RUN_DIR $c" "$c --file with extra arguments"
+done
 
 # ---- map-apply ----------------------------------------------------------------------
 r="$(make_repo)"; run="$(make_loop_run "$r")"
@@ -139,10 +154,12 @@ assert_contains "$(cat "$run/PROGRESS.md")" 'Which $(map)?' "question in progres
 assert_contains "$(cat "$FAKE_HERDR_LOG")" "notification show linear-loop eng-1-loop: needs you --body map - --sound request" "notification text"
 snap; assert_contains "$(err pause adr ENG-12 "$r/q.md")" "loop: already paused" "one pause at a time"; unchanged "second pause"
 stale; L unpause; wrote "unpause"
-assert_eq "$(led '.status, .pause, .pause_seq' | tr '\n' ' ')" "running null 1 " "unpaused"
+# a map pause is raised before Phase 0 finished: its unpause goes back there, never to running
+assert_eq "$(led '.status, .pause, .pause_seq' | tr '\n' ' ')" "created null 1 " "unpaused after a map pause: created"
 assert_eq "$(L pause adr eng-12 "$r/q.md")" "$run/pause-02.md" "sequence advances"
 assert_eq "$(led '.pause.unit + " " + .units[1].resume_phase')" "ENG-12 pending" "canonical id and saved phase"
 L unpause; assert_eq "$(led '.units[1] | has("resume_phase")')" false "saved phase removed"
+assert_eq "$(led .status)" running "unpaused after any other pause: running"
 L pause stuck ENG-12 "$r/q.md" >/dev/null; L unit-set ENG-12 .phase '"skipped"'; L unpause
 assert_eq "$(led '.units[1] | .phase + " " + (has("resume_phase") | tostring)')" "skipped false" "a decision taken while paused is kept"
 
@@ -193,6 +210,8 @@ L fail 'Linear "down" $(x)'; wrote "fail"
 assert_eq "$(led '.status + " " + .failed_reason')" 'failed Linear "down" $(x)' "failed with reason"
 assert_contains "$(cat "$FAKE_HERDR_LOG")" "notification show linear-loop eng-1-loop" "fail notifies"
 assert_exit 1 "$LOOP/scripts/loop.sh" "$run" fail
+printf '%s\n' 'Linear unreachable: `x` $(y) "z"' > "$r/why.txt"; L fail --file "$r/why.txt"
+assert_eq "$(led .failed_reason)" 'Linear unreachable: `x` $(y) "z"' "fail --file: byte-exact reason"
 : > "$FAKE_HERDR_LOG"; stale; L done; wrote "done"
 assert_eq "$(led .status)" done "done"
 assert_contains "$(cat "$FAKE_HERDR_LOG")" "notification show linear-loop eng-1-loop" "done notifies"

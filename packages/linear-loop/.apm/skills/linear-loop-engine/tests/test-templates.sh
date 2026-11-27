@@ -98,6 +98,32 @@ for J in "${jqs[@]}"; do
 done
 rm -rf "$d"
 
+# final review: a failed herd run's live orchestrator, the map unpause, foreign text on command lines
+flat="$(printf '%s\n' "$orch" | tr '\n' ' ' | tr -s ' ')"
+has "$flat" "exit its orchestrator first (\`herdr agent prompt <uslug>-orch /exit\`), then run \`/execute-plans --resume <uslug>\`" \
+  "the manual herd resume says to exit the live herd orchestrator first"
+has "$flat" "exits a failed herd run's live orchestrator first" "exec-resume's doc says it exits a failed run's orchestrator"
+hasnt "$orch" "ledger set .status '\"created\"'" "the map ruling no longer resets the status by hand"
+has "$flat" "\`unpause\` (it sets \`created\` after a \`map\` pause, \`running\` after any other)" "unpause's status is documented"
+has "$flat" "Text you did not author (the human's replies, Linear text, brainstormer and advisor messages, screen text, error output) never appears on a command line or in a heredoc" \
+  "the foreign-text rule"
+has "$flat" "write it with your file-write tool to a new file under \`dummy-run_dir/tmp/\` and pass the path" "foreign text goes by file"
+for c in note ruling fail; do has "$orch" "\`$c --file" "the template uses $c --file"; done
+for old in 'note "human ruling: <' 'ruling "<the rule>"' 'model on screen: <text>"' 'fail "Linear unreachable: <error>"' \
+           'fail "<the error line>"' "prompt it the human's instruction" "\`prompt-wait\` it the human's instruction"; do
+  hasnt "$flat" "$old" "no foreign placeholder on a command line: $old"
+done
+has "$flat" "limits it to \`[A-Za-z0-9 ._/:-]\`" "the one helper output quoted into a prompt is restricted"
+# inside a backticked command, a quoted argument holds only text the orchestrator authors
+cmdre='`(note|ruling|fail|prompt-wait|wait|keys|ledger|unit-set|unit-set-str|jq) [^`]*`'
+spans="$(printf '%s' "$flat" | grep -oE "$cmdre")"
+[ "$(printf '%s\n' "$spans" | grep -c .)" -gt 20 ] && pass || fail "the command spans were not found"
+while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  case "$p" in "<ID>"|"<counter>"|"<count>"|"<dependent>"|"<why>"|"<KEY>"|"<file>") pass ;;
+    *) fail "a quoted command argument carries $p" ;; esac
+done < <(printf '%s\n' "$spans" | grep -oE '"[^"]*"' | grep -oE '<[^<>]+>' | sort -u)
+
 # ---- advisor prompts -------------------------------------------------------------
 answer="$(cat "$T/advisor-answer.tmpl.md")"; review="$(cat "$T/advisor-review.tmpl.md")"
 for f in ISSUE_FILE EPIC_DESIGN ADR_DIRS RULINGS_FILE PRIOR_ARTIFACTS HISTORY_DIRS MESSAGE_FILE DESIGN_WORKTREE; do

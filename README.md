@@ -99,6 +99,10 @@ session (`herdr agent prompt eng-1-loop-loop /exit`), then run it:
 /linear-loop --resume eng-1-loop
 ```
 
+**Trust.** The loop orchestrator and its brainstormer sessions run with permissions bypassed,
+and they read Linear ticket and comment text. Nothing sandboxes that text:
+run it only on issues from authors you trust.
+
 Without `--map-only` the run starts right after mapping. `--resume <slug>` also recovers an
 interrupted run, as long as the run's herdr workspace still exists. Finished branches are local
 and stacked, each on the one before it; you merge them.

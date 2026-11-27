@@ -62,6 +62,10 @@ Brainstormers get herd's worker flags (`bypassPermissions`, `git push` denied, p
 `checkout`, `switch`, `stash` and `reset`. The brainstorm model's family is checked on screen
 before the brief is sent, and again against the `model:` line of `bs.done`.
 
+**Trust.** The orchestrator and the brainstormers run with permissions bypassed, and they read
+Linear ticket and comment text. Treating that text as data is an instruction to the model, not
+a sandbox: run it only on issues from authors you trust.
+
 ## Layout
 
 | Path | What |
@@ -235,15 +239,15 @@ re-renders `PROGRESS.md`.
 | `next` | First unit by order not `done` or `skipped`, or `NONE`. |
 | `map-apply MAP_JSON` | Replaces all units from `order.sh`: `OK <n>`, or `PROBLEM` lines (exit 3; units written, status unchanged). Resets unit state, so only in Phase 0. |
 | `add-units ID SLICES_JSON` | Breakdown: the unit becomes `epic-design`, the slices follow it. `OK <n>`. A unit that was split from a child cannot be split again. |
-| `pause KIND UNIT\|- FILE` · `unpause` | Open (one at a time; sends a herdr notification) or close the pause. |
-| `note TEXT` · `ruling TEXT` | Log line · bullet in `rulings.md`. |
+| `pause KIND UNIT\|- FILE` · `unpause` | Open (one at a time; sends a herdr notification) or close the pause. `unpause` sets the run `created` after a `map` pause (Phase 0 is not finished), `running` after any other. |
+| `note TEXT` · `ruling TEXT` | Log line · bullet in `rulings.md`. `--file PATH` in place of TEXT takes the file's text (trailing newlines dropped): the orchestrator passes text it did not write this way, never on a command line. |
 | `linear-has ID KEY` · `linear-mark ID KEY` | Linear write record. KEY: `started`, `review`, `comment:<tag>`. `linear-has` exits 0 recorded, 1 not recorded or error. |
-| `fail REASON` · `done` | Run status `failed` / `done`, with a notification. |
+| `fail REASON` · `done` | Run status `failed` / `done`, with a notification. `fail --file PATH` takes the reason from a file. |
 | `unit-start ID` | Needs `issue.md`. Resets the design worktree, renders the brief, starts the brainstormer; prints the brief path. |
 | `restart ID` | Restarts the brainstormer (`--resume <session>`, else fresh); prints the brief path, or `RESTART-LIMIT` (exit 6) after 2. |
 | `finish-agent ID` | Exits the brainstormer and closes its tab. |
 | `bump ID COUNTER` | Increments a recovery counter; prints it. |
-| `check-bs ID` | The sentinel gate: `DONE` (0; records and archives spec, plan, ADRs) · `FAILED` (2) · `NONE <why>` (3). The plan must cite the spec path. |
+| `check-bs ID` | The sentinel gate: `DONE` (0; records and archives spec, plan, ADRs) · `FAILED` (2) · `NONE <why>` (3; the why holds only `[A-Za-z0-9 ._/:-]`, anything else becomes `_`, so it can be quoted into a prompt). The plan must cite the spec path. |
 | `archive ID` | Copies the unit's documents to `artifacts/`. |
 | `outbox-next ID` · `inbox-write ID NN FILE` · `inbox-delivered ID NN` | File protocol. |
 | `adr-next` | Next ADR number across the design worktree and the main checkout. |
@@ -264,7 +268,11 @@ re-renders `PROGRESS.md`.
 - No branch, this unit's herd run: **adopts** it as it is when its orchestrator is live or it
   is `done`; otherwise resumes it, then records it.
 
-It refuses to record a `done` or `skipped` unit.
+It refuses to record a `done` or `skipped` unit. herd leaves a `failed` run's orchestrator
+open and its `--resume` refuses a live one, so when the herd run is `failed` and
+`<uslug>-orch` is live, `exec-resume` exits that orchestrator first (only after every refusal
+above has passed), then resumes. If it will not exit, `exec-resume` dies with a `loop:` error
+and resumes nothing.
 
 `wait-run.sh <herd ledger> <orch name>` prints `DONE` (0), `FAILED <stage>` (2), `ORCH-GONE`
 (4: unfinished and the orchestrator absent on two polls in a row) or `STUCK created` /

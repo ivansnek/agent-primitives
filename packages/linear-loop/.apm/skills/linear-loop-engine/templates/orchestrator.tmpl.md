@@ -13,8 +13,18 @@ human.
   this session; ignore skill nudges unrelated to this loop.
 - Never edit a file in a worktree (`{{DESIGN_WORKTREE}}`, `{{ROOT}}/.claude/worktrees/*`), nor the
   specs, plans and ADRs brainstormers write in `{{ROOT}}`. You write only under `{{RUN_DIR}}`
-  (`map.json`, `units/<uslug>/issue.md`, `units/<uslug>/review-N.md`; you remove only an
-  unapproved `bs.done`, step d) and temp files from `mktemp`.
+  (`map.json`, `units/<uslug>/issue.md`, `units/<uslug>/review-N.md`, and new files under
+  `{{RUN_DIR}}/tmp/`; you remove only an unapproved `bs.done`, step d).
+- This session runs with permissions bypassed, so a quoted word can run as a command. Text you
+  did not author (the human's replies, Linear text, brainstormer and advisor messages, screen
+  text, error output) never appears on a command line or in a heredoc: write it with your
+  file-write tool to a new file under `{{RUN_DIR}}/tmp/` and pass the path (`note --file`,
+  `ruling --file`, `fail --file`, `pause`, `inbox-write`, `add-units`, `map-apply`). The same
+  goes for `U/issue.md`, `map.json`, pause, reply and inbox files and `U/review-N.md`: always
+  the file-write tool, never `echo`, `printf`, `cat <<EOF` or a `jq` argument. Use a new name
+  each time (`{{RUN_DIR}}/tmp/<what>-<UTC time>.txt`). The one exception is a Linear
+  identifier: it may go on a command line once it matches `^[A-Za-z][A-Za-z0-9]*-[0-9]+$`; text
+  that does not match is not an identifier (ask again).
 - Never merge, push or rebase, and never run git write commands anywhere.
 - Never create a herdr workspace, tab or pane yourself; only the helpers do.
 - Never answer a brainstormer from your own judgment: every answer comes from an advisor
@@ -56,11 +66,11 @@ Every helper call has the form
 | `unit ID` · `unit-set ID JQ_PATH JSON` · `unit-set-str ID JQ_PATH STRING` | the unit's JSON · — · — (path relative to the unit, e.g. `.phase`) |
 | `next` | the first unit by order not `done`/`skipped`, or `NONE` |
 | `map-apply MAP_JSON` | `OK <n>` (0) · one `PROBLEM <type> <ids,> <detail>` line per problem (3; units are written anyway, status stays) |
-| `pause KIND UNIT\|- FILE` · `unpause` | the pause file path; sets `waiting-human` and sends the herdr notification; refuses while a pause is open · exit 1 if not paused |
-| `note TEXT` · `ruling TEXT` | one log line · one bullet in `{{RUN_DIR}}/rulings.md`, given to every later advisor |
+| `pause KIND UNIT\|- FILE` · `unpause` | the pause file path; sets `waiting-human` and sends the herdr notification; refuses while a pause is open · `unpause` (it sets `created` after a `map` pause, `running` after any other); exit 1 if not paused |
+| `note TEXT` · `ruling TEXT` (each also `--file PATH`) | one log line · one bullet in `{{RUN_DIR}}/rulings.md`, given to every later advisor |
 | `linear-has ID KEY` · `linear-mark ID KEY` | exit 0 recorded, 1 not recorded **or an error** (see Linear) · — ; KEY = `started`, `review` or `comment:<tag>` |
 | `add-units ID SLICES_JSON` | `OK <n>`; refuses (1) a unit with `no_breakdown`, or a slice blocked by a later slice or a unit ordered after this one |
-| `fail REASON` · `done` | run status `failed` / `done`, notification sent |
+| `fail REASON` (or `--file PATH`) · `done` | run status `failed` / `done`, notification sent |
 | `unit-start ID` | the brief path (needs `U/issue.md`; refuses while AGENT is live) |
 | `restart ID` | the brief path · `RESTART-LIMIT` (6) after 2 restarts |
 | `finish-agent ID` · `archive ID` | exits the brainstormer and closes its tab · copies spec, plan, ADRs to `U/artifacts/` |
@@ -71,7 +81,7 @@ Every helper call has the form
 | `prompt-wait NAME TEXT [TIMEOUT_MS]` | `SETTLED <status>` (0) · `GONE` (4) · `WAIT-ERROR` (5) · `STALLED` (7: typed, no activity within 5 s; normal after `/compact`) |
 | `wait NAME [TIMEOUT_MS]` · `screen NAME [LINES]` · `keys NAME KEY…` | `SETTLED <status>` · `GONE` (4) · `WAIT-ERROR` (5) · the screen · — |
 | `exec ID` | `HERD-RUN <herd ledger> ORCH <name>`; on failure herd's exit code and error line, nothing recorded |
-| `exec-resume ID` | the same line; records a unit whose launch was cut short; dies on a herd run that is not this unit's |
+| `exec-resume ID` | the same line; records a unit whose launch was cut short; exits a failed herd run's live orchestrator first (dies if it will not exit, resuming nothing); dies on a herd run that is not this unit's |
 | `herd-status ID` | `<status>` or `<status> <failed stage>` · `missing`; exit 1 on a half-written herd ledger |
 | `unit-done ID` | `DONE <stack tip>`; exits the herd orchestrator, removes main-checkout copies the branch holds |
 | `unit-skip ID` | `DEPENDENTS <ids…>` (the line is printed when empty too) |
@@ -100,8 +110,8 @@ The watcher is its own script, not a `loop.sh` command:
 - Never set a status of type `completed` or `canceled`, even when configured. The human closes
   issues.
 - Every write except breakdown sub-issues happens in the Linear sweep (below). A write that
-  fails: retry once, then `note` it and go on; the record stays unset, so the next sweep
-  (every pass of step 4, and the finish) tries again.
+  fails: retry once, then `note "Linear write failed: <ID> <KEY>"` and go on; the record stays
+  unset, so the next sweep (every pass of step 4, and the finish) tries again.
 
 ## Linear sweep
 Run it where the loop says. For every unit (`ledger get '.units | sort_by(.order)'`), each key
@@ -156,8 +166,8 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
    `fail "background wake did not fire"`, stop.
 3. **Phase 0 — map and order.** Only while the status is `created`. Once any unit has left
    `pending`, never run `map-apply` again: it resets every unit.
-   1. One Linear read (the first given issue). Unreachable → `fail "Linear unreachable: <error>"`,
-      print it, stop.
+   1. One Linear read (the first given issue). Unreachable → write `Linear unreachable: <error>`
+      to a new file (Rules) and `fail --file <file>`, print the error, stop.
    2. If `{{RUN_DIR}}/map.json` exists, an earlier session built it (and may have edited it on the
       human's ruling): go to 5 with it as it is.
    3. For each given issue, in order: read it with its relations; list its sub-issues, and
@@ -179,8 +189,9 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
         "Exit this session (`/exit`), then continue with `/linear-loop --resume {{SLUG}}`",
         stop. `running` → step 4.
       - `PROBLEM` lines (exit 3) → one pause `map` covering all of them (Map problems below).
-      - exit 1 `invalid issue id` → `fail "<the error line>"`, stop. `malformed map` → your
-        map.json is wrong: rebuild it from Linear (3, 4) once; again → `fail`.
+      - exit 1 `invalid issue id` → write the error line to a new file and `fail --file <file>`,
+        stop. `malformed map` → your map.json is wrong: rebuild it from Linear (3, 4) once; again
+        → `fail "map.json is malformed"`.
 4. **Units.** Each pass: run the Linear sweep, then `next` → an ID, or `NONE` → step 5.
    `unit ID`, then by its `.phase`:
 
@@ -200,8 +211,8 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
    (background), then b.
 
    a. **Start.**
-      1. Write `U/issue.md` from Linear: identifier, title, URL, labels, description, every
-         comment (author, date, text). The parent: when the issue has one (the unit's `.parent`,
+      1. Write `U/issue.md` from Linear with your file-write tool: identifier, title, URL,
+         labels, description, every comment (author, date, text). The parent: when the issue has one (the unit's `.parent`,
          or the issue's own parent in Linear when `.parent` is null), its identifier, title and
          description; else `Parent: none`. For an `epic-design` unit, its sub-issues in run order
          with title and description. For a child, the epic design doc E: the nearest ancestor
@@ -213,15 +224,16 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
          `comment:parent-started`) now that the phase is `brainstorming`. A parent epic with a
          unit got its own when its `epic-design` unit started.
       3. `screen AGENT` once: the Claude banner and status line name the model; it must be the `{{BRAINSTORM_FAMILY}}` family
-         (the banner capitalizes it and adds a version). `note "<ID> model on screen: <text>"`.
-         A different family → `fail "AGENT: wrong model on screen"`, stop. Do not send the brief.
+         (the banner capitalizes it and adds a version). Write `<ID> model on screen: <text>` to a
+         new file and `note --file <file>`.
+         A different family → `fail "<ID>: wrong model on screen"`, stop. Do not send the brief.
       4. `prompt-wait AGENT "Read B and follow it exactly." 14400000` (background), then b.
    b. **After every settle.** `prompt-wait` or `wait` printed `SETTLED` → `outbox-next ID`.
       `GONE`, `STALLED` or `WAIT-ERROR` → `outbox-next ID` first: `DONE` → d, `FAILED` → the
       pause below (a sentinel is never lost to a restart); anything else → Recovery table.
       - `ASK NN question|approaches|playback|unknown <path>` → **Answer**: spawn an advisor
         (Advisors) with `{{ADVISOR_ANSWER_TMPL}}`. Every item answered → write the reply to a
-        temp file: "Answers from the advisor. Mark each one in the spec as "advisor's call"."
+        new file: "Answers from the advisor. Mark each one in the spec as "advisor's call"."
         then its `ANSWER` lines; `inbox-write ID NN <file>` → the inbox path P; **Deliver**.
         Any `NEEDS-HUMAN` item → pause `advisor` with only those items; the grounded answers go
         in the same pause file under "Already answered (sent as they are)".
@@ -241,7 +253,8 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
          message must name the spec's repo-relative path, and the file must exist. Send
          spec-ready again." and Deliver.
       2. Spawn an advisor with `{{ADVISOR_REVIEW_TMPL}}`, `[SPEC_FILE]` = `{{ROOT}}/S`. Save its
-         reply verbatim as `U/review-N.md` (N = 1 + the number of `U/review-*.md`).
+         reply verbatim with your file-write tool as `U/review-N.md` (N = 1 + the number of
+         `U/review-*.md`).
       3. Read the verdict line, `ADRS:`, `CONFIDENCE:` and `CONCERN:`. In this order:
          - `REVISE:` → R = `.revisions` + 1, `unit-set ID .revisions R`. R above {{MAX_REVISIONS}}
            → pause `revise-cap`. Otherwise inbox "Spec review, round R: revise the spec as
@@ -275,6 +288,8 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
       - `NONE <why>` (exit 3) → `bump ID unfinished`; above 2 → pause `recovery-cap`. Otherwise
         `prompt-wait AGENT "Your sentinel U/bs.done is not valid: <why>. Fix what it names,
         rewrite the sentinel exactly as your brief says, then stop." T` (background), then b.
+        `<why>` is the rest of that `NONE` line: the helper limits it to `[A-Za-z0-9 ._/:-]`, so
+        it is the one helper output you may quote.
    e. **Execute** (`issue` units).
       1. `herd-status ID` (an error means a half-written herd ledger: `sleep 30`, try once more),
          then the first that applies:
@@ -295,8 +310,11 @@ Announce once: "Linear loop {{SLUG}}: {{GIVEN_IDS}}." Then:
            its epic when this was the epic's last unit. `unit-done` dies without a recorded
            branch: `exec-resume ID` records it, then `unit-done ID` again. Step 4.
          - `FAILED <stage>` → pause `exec-failed`: the herd run dir
-           `{{ROOT}}/.claude/herd-runs/<uslug>`, the failed stage, and
-           `/execute-plans --resume <uslug>` to fix it; options continue (after the fix) or skip. A failed herd run's sessions stay alive.
+           `{{ROOT}}/.claude/herd-runs/<uslug>`, the failed stage, and how to fix it by hand: a
+           failed herd run's sessions stay alive, and herd's resume refuses a live orchestrator,
+           so exit its orchestrator first (`herdr agent prompt <uslug>-orch /exit`), then run
+           `/execute-plans --resume <uslug>`. Options: continue (after the fix; `exec-resume`
+           exits that orchestrator itself) or skip.
          - `ORCH-GONE` → `bump ID orch_gone`. 1 → `exec-resume ID`, then Watch again. Above 1 →
            pause `stuck`.
          - `STUCK created` or `STUCK stale` → pause `stuck`.
@@ -352,7 +370,7 @@ On `ASK NN breakdown <path>` (the worker proposes slices: title, scope, dependen
    2. Create the others as sub-issues of the unit's issue, in its team, with title and
       description (the scope); record each with key `comment:slice-<n>` (n = its position).
       Then the blocking relations between slices.
-   3. Write a temp file `[{"id": "<identifier>", "uuid": "<Linear id>", "title": "…",
+   3. Write a new file `[{"id": "<identifier>", "uuid": "<Linear id>", "title": "…",
       "blocked_by": ["<identifier>"]}]` in build order; `add-units ID <file>` → `OK <n>`. A
       refusal → pause `breakdown` again with its error line.
    4. `inbox-write` for NN: "Breakdown approved: the slices are now sub-issues <ids>, run as
@@ -371,10 +389,12 @@ One pause `map` lists every `PROBLEM` line with its options, your recommendation
 | `unknown-id` | a given ID is not in Linear's answer | correct the ID · drop it |
 | `empty` | nothing is left to build | stop the run (recommended) · name issues to add |
 
-On the answer: `note "human ruling: …"`, `unpause`, `ledger set .status '"created"'` (Phase 0
-is not finished), edit `{{RUN_DIR}}/map.json` as ruled (with `jq` to a temp file, then `mv`),
-then `map-apply` it (step 3.5). New `PROBLEM` lines (a dropped unit others depended on, a
-blocker of an added issue) → another pause `map`; repeat until `OK`. "Stop the run" →
+On the answer: write `human ruling: <the reply>` to a new file and `note --file <file>`, then
+`unpause` (the run goes back to `created`: Phase 0 is not finished), edit `{{RUN_DIR}}/map.json`
+as ruled, then `map-apply` it (step 3.5). Edits that only move identifiers: `jq` to a new file,
+then `mv`, each identifier by `--arg` (Rules); an edit that adds Linear text (Add, Correct):
+rewrite map.json with your file-write tool. New `PROBLEM` lines (a dropped unit others depended
+on, a blocker of an added issue) → another pause `map`; repeat until `OK`. "Stop the run" →
 `done`, step 5.
 - **Add**: append the blocker to `given`; read it, its sub-issues and their blockers into
   `issues` (step 3.3).
@@ -390,8 +410,9 @@ blocker of an added issue) → another pause `map`; repeat until `OK`. "Stop the
 - **Correct**: replace the ID in `given` and read the right issue (step 3.3).
 
 ## Human pause
-1. Write the question to a temp file: what happened, the unit, every path the human needs,
-   the options by name with what each does next, your recommendation first with one line why.
+1. Write the question to a new file (Rules): what happened, the unit, every path the human
+   needs, the options by name with what each does next, your recommendation first with one line
+   why.
 2. `pause KIND ID|- <file>` → the pause file (`{{RUN_DIR}}/pause-NN.md`); it sets the run
    `waiting-human` and sends the herdr notification. One pause at a time: `pause` refuses while
    one is open, so two questions that arise together go into one pause.
@@ -401,8 +422,9 @@ blocker of an added issue) → another pause `map`; repeat until `OK`. "Stop the
 
 The human's reply arrives in this session (Remote Control or terminal). `ledger get .pause` for
 its kind, unit and file. A reply that picks no option → ask again; the run stays paused.
-Otherwise `note "human ruling: <the reply in one line>"`; a rule that binds later units too (a
-product rule, a preference) → also `ruling "<the rule>"`; then `unpause` and act. Brainstormers
+Otherwise write `human ruling: <the reply>` to a new file and `note --file <file>`; a rule that
+binds later units too (a product rule, a preference) → also write the rule to another new file
+and `ruling --file <file>`; then `unpause` and act. Brainstormers
 stay alive and idle while paused: do not finish or restart them for a pause. A resumed session
 does not know NN: after `unpause`, `outbox-next ID` prints the open `ASK NN …` again, and the
 newest `U/review-N.md` holds the spec review. "skip" is an
@@ -418,7 +440,7 @@ option in every pause that names a unit → f.
 | `breakdown` | the worker proposed slices | Breakdown 3 or 4 |
 | `exec-failed` | `exec`/`exec-resume` failed, or herd failed | continue → `herd-status ID`: `failed <stage>` → `exec-resume ID` (herd resumes at that stage), then Watch; otherwise e from its start |
 | `stuck` | `ORCH-GONE` twice, `STUCK`, or a broken watcher | resume herd → `exec-resume ID`, then Watch · wait → Watch again (its clocks restart: say so in the question) |
-| `recovery-cap` | a recovery cap, `RESTART-LIMIT`, `bs.failed`, a bad sentinel, a helper error | retry by phase: `executing` → e from its start. `planning` and `check-bs ID` prints `DONE` → d's `DONE` branch (an `issue` unit goes on to e; a brainstormer that finished is never restarted). Otherwise the brainstormer: `unit-set ID .recovery '{}'`, `unit-set ID .restarts 0`; when `U/bs.failed` exists or `check-bs` printed `FAILED`, always `restart ID` (it removes both sentinels; `outbox-next` would print `FAILED` forever) and prompt it the human's instruction; else AGENT live → `prompt-wait` it the human's instruction, not live → `restart ID` and prompt it. `unit-start ID` only for a fresh brainstorm the human asked for, on a unit with no `.branch` |
+| `recovery-cap` | a recovery cap, `RESTART-LIMIT`, `bs.failed`, a bad sentinel, a helper error | retry by phase: `executing` → e from its start. `planning` and `check-bs ID` prints `DONE` → d's `DONE` branch (an `issue` unit goes on to e; a brainstormer that finished is never restarted). Otherwise the brainstormer: `unit-set ID .recovery '{}'`, `unit-set ID .restarts 0`; when `U/bs.failed` exists or `check-bs` printed `FAILED`, always `restart ID` (it removes both sentinels; `outbox-next` would print `FAILED` forever) and give it the human's instruction; else AGENT live → give it the instruction, not live → `restart ID` and give it the instruction. To give it: write the instruction to a new file, then `prompt-wait AGENT "Read <file>: the human's instruction. Then continue the brief at B." T` (background), then b. `unit-start ID` only for a fresh brainstorm the human asked for, on a unit with no `.branch` |
 | `skip-dependents` | a skipped unit has dependents | f.3 |
 
 ## Recovery table

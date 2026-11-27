@@ -215,6 +215,11 @@ done
 for a in "$r/docs/adr/0001-a.md" docs/adr/../../outside.md outside.md 'docs/adr/*.md' 'docs/adr/0001-a.md, ../x'; do
   sent "$spec" "$plan" "$a"; assert_contains "$(out_rc check-bs ENG-12)" "NONE adr-missing: " "adr rejected: $a"
 done
+# the why is quoted into a prompt: its foreign part keeps only [A-Za-z0-9 ._/:-], anything else is _
+sent "$spec" "$plan" 'docs/adr/$(id)`w`"q";é.md'
+assert_eq "$(out_rc check-bs ENG-12)" 'NONE adr-missing: docs/adr/__id__w__q____.md|3' "adr-missing why is restricted to safe characters"
+sent "$spec" "$plan" "docs/adr/a\\b'c{d}.md"
+assert_eq "$(out_rc check-bs ENG-12)" 'NONE adr-missing: docs/adr/a_b_c_d_.md|3' "backslash, quote and braces replaced"
 c="$r/pwned"; sent "\$(touch $c)" "$plan" none; L check-bs ENG-12 >/dev/null || true; assert_no_file "$c" "nothing executed"
 if cmp -s "$run/run.json" "$r/before.json"; then pass; else fail "a refused sentinel changed the ledger"; fi
 sent "$spec" none none; assert_eq "$(out_rc check-bs ENG-12)" "NONE plan-missing|3" "issue needs a plan"

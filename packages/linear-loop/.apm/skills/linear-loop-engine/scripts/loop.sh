@@ -6,6 +6,7 @@
 #   pause KIND UNIT|- FILE | unpause | note TEXT | ruling TEXT
 #   linear-has ID KEY | linear-mark ID KEY   (KEY: started | review | comment:<tag>)
 #   add-units ID SLICES_JSON | fail REASON | done
+#   (note, ruling and fail also take --file PATH in place of the text)
 #   unit-start ID | restart ID | finish-agent ID | bump ID COUNTER | check-bs ID | archive ID
 #   outbox-next ID | inbox-write ID NN FILE | inbox-delivered ID NN | adr-next
 #   prompt-wait NAME TEXT [TIMEOUT_MS] | wait NAME [TIMEOUT_MS] | screen NAME [LINES] | keys NAME KEY...
@@ -87,6 +88,20 @@ unit_get() {                 # INDEX JQ_PATH -> raw value
 unit_set() {                 # ID JQ_PATH JSON  (the path is relative to the unit; "." is all of it)
   local i; i="$(uidx "$1")" || exit 1
   write "" ".units[\$i] |= ($2 = \$v)" --argjson i "$i" --argjson v "$3"
+}
+
+# note, ruling and fail: the text as arguments, or with --file PATH the file's text (trailing
+# newlines dropped), so text the caller did not write never has to be on its command line.
+text_arg() {                 # NAME ARGS... -> sets TEXT
+  local name="$1"; shift
+  if [ "${1:-}" = --file ]; then
+    [ $# -eq 2 ] || herd_die "loop: usage: loop.sh RUN_DIR $name --file PATH"
+    [ -f "$2" ] || herd_die "loop: no text file: $2"
+    TEXT="$(cat -- "$2")" || herd_die "loop: could not read $2"
+  else
+    need $# 1 "$name TEXT | $name --file PATH"
+    TEXT="$*"
+  fi
 }
 
 # ---- map -----------------------------------------------------------------------
@@ -182,11 +197,13 @@ pause() {                    # KIND UNIT|- FILE -> pause file path
 }
 unpause() {
   [ "$(L '.pause != null')" = true ] || herd_die "loop: not paused"
-  # a phase set while paused (a skip, say) is a decision: only a still-waiting unit goes back
+  # a phase set while paused (a skip, say) is a decision: only a still-waiting unit goes back.
+  # A map pause is raised before Phase 0 finished: the run goes back there, not to the units.
   write "unpaused" \
     '.pause.unit as $unit
+     | .pause.kind as $kind
      | .pause = null
-     | .status = "running"
+     | .status = (if $kind == "map" then "created" else "running" end)
      | .units |= map(if .id == $unit and has("resume_phase")
                      then (if .phase == "awaiting-human" then .phase = .resume_phase else . end) | del(.resume_phase)
                      else . end)'
@@ -333,7 +350,9 @@ archive() {                  # ID: copy spec, plan and ADRs to units/<uslug>/art
 sentinel_value() {           # FILE KEY -> the first "KEY: value" line's value, trimmed
   sed -n "/^$2:/{s/^$2:[[:space:]]*//;s/[[:space:]]*\$//;p;q;}" "$1"
 }
-not_done() { printf 'NONE %s\n' "$(printf '%s' "$1" | tr -d '[:cntrl:]')"; exit 3; }
+# The why is quoted into a prompt the orchestrator types: only [A-Za-z0-9 ._/:-], anything else
+# (each byte of it) becomes _.
+not_done() { printf 'NONE %s\n' "$(printf '%s' "$1" | LC_ALL=C tr -c 'A-Za-z0-9 ._/:-' '_')"; exit 3; }
 # A refusal never changes the ledger: the orchestrator decides what a bad sentinel means.
 check_bs() {                 # ID -> DONE (0) | FAILED + text (2) | NONE why (3)
   local root adr want line spec plan adrs a list=() found=() adrs_json
@@ -611,13 +630,23 @@ own_herd_run() {             # (after exec_prepare) HERD_RUN_JSON
     length == 1 and (.[0] | .base == $base and (.plans | length) == 1 and .plans[0].path == $plan)' \
     "$1" >/dev/null 2>&1
 }
+# herd leaves a failed run's orchestrator open, and its --resume refuses a live one. Called only
+# once every refusal has passed: exits that orchestrator when the run is failed, else nothing.
+exit_failed_orch() {         # HERD_RUN_JSON
+  [ "$(jq -r '.status // ""' "$1" 2>/dev/null)" = failed ] && herd_agent_live "$USLUG-orch" || return 0
+  herd_agent_exit "$USLUG-orch" \
+    || herd_die "loop: $UNIT: the failed herd run's orchestrator $USLUG-orch did not exit; exit it (herdr agent prompt $USLUG-orch /exit), then exec-resume $UNIT again"
+  log "$UNIT: exited $USLUG-orch of the failed herd run before resuming it"
+}
 # A unit with no branch is one whose exec launch failed part way, or was cut off before the
 # ledger write. It is recorded here as exec would have: at once when herd's run needs no resume
 # (herd refuses one while its orchestrator is live or after it finished), else after resuming it.
+# A failed run is resumed: its orchestrator is exited first.
 exec_resume() {              # ID -> HERD-RUN line
   local phase j
   unit_ctx "$1"
   if [ -n "$(unit_get "$I" '.branch // ""')" ]; then
+    exit_failed_orch "$(herd_ledger)"
     herd_launch --resume "$USLUG"
   else
     phase="$(unit_get "$I" .phase)"
@@ -630,6 +659,7 @@ exec_resume() {              # ID -> HERD-RUN line
     else
       own_herd_run "$j" \
         || herd_die "loop: $UNIT: the herd run at $j is not this unit's (its plan or base differs): not recording it"
+      exit_failed_orch "$j"
       if herd_agent_live "$USLUG-orch" || [ "$(jq -r .status "$j")" = done ]; then
         exec_record "adopted the existing herd run"
       else
@@ -737,11 +767,11 @@ case "$CMD" in
   add-units) need $# 2 "add-units ID SLICES_JSON"; add_units "$1" "$2" ;;
   pause) need $# 3 "pause KIND UNIT|- FILE"; pause "$1" "$2" "$3" ;;
   unpause) unpause ;;
-  note) need $# 1 "note TEXT"; log "$*"; render ;;
-  ruling) need $# 1 "ruling TEXT"; ruling "$*" ;;
+  note) text_arg note "$@"; log "$TEXT"; render ;;
+  ruling) text_arg ruling "$@"; ruling "$TEXT" ;;
   linear-has) need $# 2 "linear-has ID KEY"; linear_has "$1" "$2" ;;
   linear-mark) need $# 2 "linear-mark ID KEY"; linear_mark "$1" "$2" ;;
-  fail) need $# 1 "fail REASON"; run_fail "$*" ;;
+  fail) text_arg fail "$@"; run_fail "$TEXT" ;;
   done) run_done ;;
   unit-start) need $# 1 "unit-start ID"; unit_start "$1" ;;
   restart) need $# 1 "restart ID"; restart_unit "$1" ;;
