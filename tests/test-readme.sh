@@ -16,4 +16,5 @@ skill="$(cat "$REPO_ROOT/packages/linear-loop/.apm/skills/linear-loop-engine/SKI
 assert_contains "$skill" "name: linear-loop-engine" "skill frontmatter name"
 assert_contains "$skill" "advisorMaxRevisions" "skill documents the config"
 assert_contains "$skill" "PENDING-DELIVERY" "skill documents the file protocol"
+assert_contains "$readme" "herdr agent prompt eng-1-loop-loop /exit" "README exits the orchestrator by its agent name (<slug>-loop)"
 finish

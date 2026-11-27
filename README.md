@@ -93,7 +93,7 @@ With the herdr server running, preview the dependency map first:
 ```
 
 The orchestrator reads the issues, prints the ordered units and stops. Check the list, exit that
-session (`herdr agent prompt eng-1-loop /exit`), then run it:
+session (`herdr agent prompt eng-1-loop-loop /exit`), then run it:
 
 ```
 /linear-loop --resume eng-1-loop
